@@ -5,11 +5,17 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { logDiagnostic } from "../diagnostics";
 import {
+  buildHotkeyWithHeld,
   captureHotkey,
+  captureModifierHotkey,
   formatHotkeyForDisplay,
   getKeyboardLayoutMap,
+  getMainKey,
   getStateClass,
+  sortHeld,
 } from "../hotkeys";
 import { isAlphabeticKeyboardKey } from "../keyboardKeyCase";
 import type { KeyboardKeyCase, MouseButton } from "../store";
@@ -23,8 +29,6 @@ interface Props {
   onMouseButtonCapture?: (button: MouseButton) => void;
   conflicts?: string[];
 }
-
-const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta"]);
 
 function applyKeyboardKeyCase(
   value: string,
@@ -55,6 +59,8 @@ export default function KeyCaptureInput({
     useState<Awaited<ReturnType<typeof getKeyboardLayoutMap>>>(null);
   const onChangeRef = useRef(onChange);
   const onMouseButtonCaptureRef = useRef(onMouseButtonCapture);
+  const comboRef = useRef<string | null>(null);
+  const capturedModifiersRef = useRef<string[]>([]);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -71,6 +77,24 @@ export default function KeyCaptureInput({
     };
   }, []);
 
+  useEffect(() => {
+    if (!listening) return;
+
+    invoke("set_hotkey_capture_active", { active: true }).catch((err) => {
+      logDiagnostic("KeyCaptureInput.toggle", {
+        error: String(err),
+      });
+    });
+
+    return () => {
+      invoke("set_hotkey_capture_active", { active: false }).catch((err) => {
+        logDiagnostic("KeyCaptureInput.clear", {
+          error: String(err),
+        });
+      });
+    };
+  }, [listening]);
+
   const displayText = useMemo(() => {
     if (listening) return "Press a key\u2026";
     if (!value) return "Select key";
@@ -83,11 +107,14 @@ export default function KeyCaptureInput({
 
   useEffect(() => {
     if (!listening) return;
+    comboRef.current = null;
+    capturedModifiersRef.current = [];
 
     const finishCapture = (nextValue?: string) => {
       if (nextValue !== undefined) {
         onChangeRef.current(nextValue);
       }
+      comboRef.current = null;
       setListening(false);
       inputRef.current?.blur();
     };
@@ -98,37 +125,66 @@ export default function KeyCaptureInput({
       event.preventDefault();
       event.stopPropagation();
 
-      if (event.key === "Escape") {
-        finishCapture();
+      if (event.key === "Escape" || event.code === "Escape") {
+        finishCapture("escape");
         return;
       }
 
-      if (
-        (event.key === "Backspace" || event.key === "Delete") &&
-        !event.ctrlKey &&
-        !event.altKey &&
-        !event.shiftKey &&
-        !event.metaKey
-      ) {
-        finishCapture("");
+      if (event.key === "Backspace") {
+        finishCapture("backspace");
         return;
       }
 
-      if (MODIFIER_KEYS.has(event.key)) return;
+      if (event.key === "Delete") {
+        finishCapture("delete");
+        return;
+      }
 
-      const captured = captureHotkey({
-        key: event.key,
-        code: event.code,
-        location: event.location,
-        ctrlKey: false,
-        altKey: false,
-        shiftKey: false,
-        metaKey: false,
-      });
+      const modifierHit = captureModifierHotkey(event);
+      if (modifierHit) {
+        comboRef.current = comboRef.current
+          ? `${comboRef.current}+${modifierHit}`
+          : modifierHit;
+        if (!capturedModifiersRef.current.includes(modifierHit)) {
+          capturedModifiersRef.current.push(modifierHit);
+        }
+        return;
+      }
 
+      const mainKey = getMainKey(event);
+      if (mainKey) {
+        const held = capturedModifiersRef.current;
+        const captured =
+          held.length > 0
+            ? buildHotkeyWithHeld(mainKey, held)
+            : captureHotkey(event);
+        if (captured) {
+          finishCapture(captured);
+        }
+        return;
+      }
+      const captured = captureHotkey(event);
       if (captured) {
-        const mainKey = captured.split("+").pop() ?? captured;
-        finishCapture(mainKey);
+        finishCapture(captured);
+      }
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      const modifierHit = captureModifierHotkey(event);
+      if (!modifierHit) return;
+
+      if (comboRef.current) {
+        const parts = comboRef.current
+          .split("+")
+          .filter((part) => part !== modifierHit);
+        comboRef.current = parts.length ? parts.join("+") : null;
+        if (!comboRef.current) {
+          // All keys released with no main key captured: commit the full
+          // modifier chord (e.g. "leftctrl+leftshift") instead of just the
+          // last-released modifier.
+          const full = sortHeld(capturedModifiersRef.current).join("+");
+          finishCapture(full || undefined);
+        }
       }
     };
 
@@ -140,12 +196,21 @@ export default function KeyCaptureInput({
       finishCapture();
     };
 
+    const handleBlur = () => {
+      comboRef.current = null;
+      capturedModifiersRef.current = [];
+    };
+
     window.addEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("keyup", handleKeyUp, true);
     window.addEventListener("contextmenu", handleContextMenu, true);
+    window.addEventListener("blur", handleBlur);
 
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("keyup", handleKeyUp, true);
       window.removeEventListener("contextmenu", handleContextMenu, true);
+      window.removeEventListener("blur", handleBlur);
     };
   }, [listening]);
 
@@ -153,15 +218,21 @@ export default function KeyCaptureInput({
   const stateClass = getStateClass(listening, hasConflict, !!value);
 
   return (
-    <div className={`hk-wrapper ${stateClass} ${className ?? ""}`} style={style}>
+    <div className={`hk-wrapper ${stateClass}`}>
       <button
         ref={inputRef}
         type="button"
-        className="hk-button"
+        className={`${className ?? ""} hk-button`}
         style={{
+          ...style,
           paddingRight: value && !listening ? "1.25rem" : undefined,
         }}
         onClick={() => {
+          invoke("stop_clicker").catch((err) => {
+            logDiagnostic("KeyCaptureInput.stopClicker", {
+              error: String(err),
+            });
+          });
           setListening(true);
         }}
         onBlur={() => {
@@ -170,9 +241,7 @@ export default function KeyCaptureInput({
           }
         }}
         title={
-          hasConflict
-            ? `Already bound to: ${conflicts!.join(", ")}`
-            : undefined
+          hasConflict ? `Already bound to: ${conflicts!.join(", ")}` : undefined
         }
       >
         {displayText}
@@ -183,6 +252,11 @@ export default function KeyCaptureInput({
           className="hk-clear-btn"
           onClick={(e) => {
             e.stopPropagation();
+            invoke("stop_clicker").catch((err) => {
+              logDiagnostic("KeyCaptureInput.clear", {
+                error: String(err),
+              });
+            });
             onChange("");
           }}
           title="Clear key"

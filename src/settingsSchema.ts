@@ -1,27 +1,65 @@
+import { DEFAULT_ACCENT_HEX, sanitizeThemeProfiles } from "./themeModel";
+import { sanitizeRecentSoundPaths } from "./soundRecents";
+import { SOUND_TRIM_MAX_MS } from "./soundTrim";
+import type { ThemeProfile } from "./themeModel";
+
 export type ClickInterval = "s" | "m" | "h" | "d";
 export type MouseButton = "Left" | "Middle" | "Right";
 export type InputType = "mouse" | "keyboard";
 export type KeyboardKeyCase = "lower" | "upper";
 export type ClickMode = "Toggle" | "Hold";
+export type DutyCycleMode = "Click" | "Hold";
 export type TimeLimitUnit = "s" | "m" | "h";
-export type SavedPanel = "simple" | "advanced";
-export type Theme = "dark" | "light";
+export type SavedPanel = "simple" | "advanced" | "zones" | "click-points";
+export type Theme = "dark" | "light" | "custom";
+export type IconTheme = "auto" | "dark" | "light";
+export type IconColor = "theme" | "default";
 export type PresetId = string;
 export type RateInputMode = "rate" | "duration";
-export type AdvancedSequenceLayout = "wide" | "tall";
+export type ProcessListMode = "whitelist" | "blacklist";
+export type IndicatorCorner =
+  "top-right" | "top-left" | "bottom-right" | "bottom-left";
+export type IndicatorColorMode = "theme" | "black" | "white" | "custom";
+export type IndicatorCountdownMode = "plain" | "short" | "words";
+export type IndicatorBackgroundMode = "off" | "card" | "shadow";
 
-export interface SequencePoint {
+const INT32_MIN: number = -2147483648;
+const INT32_MAX: number = 2147483647;
+const STOP_ZONE_OFFSET_LIMIT = 99999;
+const STOP_ZONE_SIZE_LIMIT = 99999;
+export const STOP_ZONE_MAX_COUNT = 64;
+
+export interface ProcessListEntry {
+  name: string;
+  enabled: boolean;
+}
+
+export interface ClickPoint {
   id: string;
   x: number;
   y: number;
   clicks: number;
+  radius: number;
 }
 
-export const DEFAULT_ACCENT_COLOR = "#22c55e";
-export const MAX_PRESETS = 20;
+export interface StopZone {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  action: "stop" | "pause" | "start";
+}
+
+export const DEFAULT_ACCENT_COLOR = DEFAULT_ACCENT_HEX;
+export const DEFAULT_FONT_FAMILY = "RobotoFlex";
+export const DEFAULT_TITLE_FONT = "Pristina";
 export const PRESET_NAME_MAX_LENGTH = 40;
 export const DEFAULT_MAX_CLICK_SPEED = 500;
 export const EXTENDED_MAX_CLICK_SPEED = 1000;
+export const UI_SCALE_MIN = 25;
+export const UI_SCALE_MAX = 300;
+export const UI_SCALE_DEFAULT = 100;
 
 export const CLICK_INTERVAL_OPTIONS = [
   { value: "s", label: "Second" },
@@ -30,10 +68,51 @@ export const CLICK_INTERVAL_OPTIONS = [
   { value: "d", label: "Day" },
 ] as const satisfies ReadonlyArray<{ value: ClickInterval; label: string }>;
 
-export const MODE_OPTIONS = ["Toggle", "Hold"] as const satisfies ReadonlyArray<ClickMode>;
-export const MOUSE_BUTTON_OPTIONS = ["Left", "Middle", "Right"] as const satisfies ReadonlyArray<MouseButton>;
-export const TIME_LIMIT_UNIT_OPTIONS = ["s", "m", "h"] as const satisfies ReadonlyArray<TimeLimitUnit>;
-export const THEME_OPTIONS = ["dark", "light"] as const satisfies ReadonlyArray<Theme>;
+export const MODE_OPTIONS = [
+  "Toggle",
+  "Hold",
+] as const satisfies ReadonlyArray<ClickMode>;
+export const DUTY_CYCLE_MODE_OPTIONS = [
+  "Click",
+  "Hold",
+] as const satisfies ReadonlyArray<DutyCycleMode>;
+export const MOUSE_BUTTON_OPTIONS = [
+  "Left",
+  "Middle",
+  "Right",
+] as const satisfies ReadonlyArray<MouseButton>;
+export const TIME_LIMIT_UNIT_OPTIONS = [
+  "s",
+  "m",
+  "h",
+] as const satisfies ReadonlyArray<TimeLimitUnit>;
+export const THEME_OPTIONS = [
+  "dark",
+  "light",
+  "custom",
+] as const satisfies ReadonlyArray<Theme>;
+export const INDICATOR_CORNER_OPTIONS = [
+  "top-right",
+  "top-left",
+  "bottom-right",
+  "bottom-left",
+] as const satisfies ReadonlyArray<IndicatorCorner>;
+export const INDICATOR_COLOR_MODE_OPTIONS = [
+  "theme",
+  "black",
+  "white",
+  "custom",
+] as const satisfies ReadonlyArray<IndicatorColorMode>;
+export const INDICATOR_COUNTDOWN_MODE_OPTIONS = [
+  "plain",
+  "short",
+  "words",
+] as const satisfies ReadonlyArray<IndicatorCountdownMode>;
+export const INDICATOR_BACKGROUND_MODE_OPTIONS = [
+  "off",
+  "card",
+  "shadow",
+] as const satisfies ReadonlyArray<IndicatorBackgroundMode>;
 
 type LimitDef = {
   min?: number;
@@ -61,15 +140,24 @@ type FieldDef<T> = {
       | "behavior"
       | "startup"
       | "appearance"
-      | "presets";
+      | "keybinds"
+      | "presets"
+      | "sounds";
     control: UiControl;
   };
 };
 
-function createSequencePointId(): string {
+function createClickPointId(): string {
   return (
     globalThis.crypto?.randomUUID?.() ??
-    `seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    `cp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  );
+}
+
+export function createStopZoneId(): string {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `sz-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   );
 }
 
@@ -104,6 +192,14 @@ const PRESET_FIELDS = {
     default: "Toggle" as ClickMode,
     ui: { section: "core", control: "select" },
   },
+  hotkey: {
+    default: "ctrl+y",
+    ui: { section: "core", control: "hotkey" },
+  },
+  dutyCycleMode: {
+    default: "Click" as DutyCycleMode,
+    ui: { section: "core", control: "select" },
+  },
   dutyCycleEnabled: {
     default: true,
     ui: { section: "limits", control: "toggle" },
@@ -113,11 +209,11 @@ const PRESET_FIELDS = {
     limit: { min: 0, max: 100 },
     ui: { section: "limits", control: "number" },
   },
-  speedVariationEnabled: {
+  speedRandomizationEnabled: {
     default: true,
     ui: { section: "limits", control: "toggle" },
   },
-  speedVariation: {
+  speedRandomization: {
     default: 35,
     limit: { min: 0, max: 200 },
     ui: { section: "limits", control: "number" },
@@ -132,7 +228,7 @@ const PRESET_FIELDS = {
   },
   clickLimit: {
     default: 1000,
-    limit: { min: 1, max: 10_000_000 },
+    limit: { min: 1, max: 100_000_000 },
     ui: { section: "limits", control: "number" },
   },
   timeLimitEnabled: {
@@ -196,21 +292,112 @@ const PRESET_FIELDS = {
     limit: { min: 0, max: 10000 },
     ui: { section: "failsafe", control: "number" },
   },
-  sequenceEnabled: {
+  clickPointsEnabled: {
     default: false,
     ui: { section: "core", control: "toggle" },
   },
-  sequencePoints: {
-    default: [] as SequencePoint[],
+  stopZonesEnabled: {
+    default: false,
+    ui: { section: "failsafe", control: "toggle" },
+  },
+  stopWhenComplete: {
+    default: false,
+    ui: { section: "core", control: "toggle" },
+  },
+  clickPoints: {
+    default: [] as ClickPoint[],
     ui: { section: "core", control: "custom" },
+  },
+  processListEnabled: {
+    default: false,
+    ui: { section: "failsafe", control: "toggle" },
+  },
+  processListMode: {
+    default: "whitelist" as ProcessListMode,
+    ui: { section: "failsafe", control: "select" },
+  },
+  processListEntries: {
+    default: [] as ProcessListEntry[],
+    ui: { section: "failsafe", control: "custom" },
   },
 } satisfies Record<string, FieldDef<unknown>>;
 
 //All Other settings that do not need to be saved by presets go here.
 const SETTINGS_ONLY_FIELDS = {
-  hotkey: {
-    default: "ctrl+y",
-    ui: { section: "core", control: "hotkey" },
+  elevationNoticeEnabled: {
+    default: true,
+    ui: { section: "behavior", control: "toggle" },
+  },
+  onboardingCompleted: {
+    default: false,
+    ui: { section: "behavior", control: "toggle" },
+  },
+  alwaysRunAsAdmin: {
+    default: false,
+    ui: { section: "startup", control: "toggle" },
+  },
+  clickSoundEnabled: {
+    default: false,
+    ui: { section: "sounds", control: "toggle" },
+  },
+  clickSoundPath: {
+    default: "",
+    ui: { section: "sounds", control: "custom" },
+  },
+  clickSoundVolume: {
+    default: 50,
+    limit: { min: 0, max: 100 },
+    ui: { section: "sounds", control: "number" },
+  },
+  clickSoundAllowFastRate: {
+    default: false,
+    ui: { section: "sounds", control: "toggle" },
+  },
+  enableSoundTrimStart: {
+    default: 0,
+    limit: { min: 0, max: SOUND_TRIM_MAX_MS },
+    ui: { section: "sounds", control: "custom" },
+  },
+  enableSoundTrimEnd: {
+    default: 0,
+    limit: { min: 0, max: SOUND_TRIM_MAX_MS },
+    ui: { section: "sounds", control: "custom" },
+  },
+  disableSoundTrimStart: {
+    default: 0,
+    limit: { min: 0, max: SOUND_TRIM_MAX_MS },
+    ui: { section: "sounds", control: "custom" },
+  },
+  disableSoundTrimEnd: {
+    default: 0,
+    limit: { min: 0, max: SOUND_TRIM_MAX_MS },
+    ui: { section: "sounds", control: "custom" },
+  },
+  clickSoundTrimStart: {
+    default: 0,
+    limit: { min: 0, max: SOUND_TRIM_MAX_MS },
+    ui: { section: "sounds", control: "custom" },
+  },
+  clickSoundTrimEnd: {
+    default: 0,
+    limit: { min: 0, max: SOUND_TRIM_MAX_MS },
+    ui: { section: "sounds", control: "custom" },
+  },
+  recentSoundPaths: {
+    default: [] as string[],
+    ui: { section: "sounds", control: "custom" },
+  },
+  fancyTitle: {
+    default: false,
+    ui: { section: "appearance", control: "toggle" },
+  },
+  titleFont: {
+    default: DEFAULT_TITLE_FONT,
+    ui: { section: "appearance", control: "select" },
+  },
+  fontFamily: {
+    default: DEFAULT_FONT_FAMILY,
+    ui: { section: "appearance", control: "select" },
   },
   rateInputMode: {
     default: "rate" as RateInputMode,
@@ -223,7 +410,7 @@ const SETTINGS_ONLY_FIELDS = {
   },
   durationMinutes: {
     default: 0,
-    limit: { min: 0 },
+    limit: { min: 0, max: 59 },
     ui: { section: "limits", control: "number" },
   },
   durationSeconds: {
@@ -236,29 +423,28 @@ const SETTINGS_ONLY_FIELDS = {
     limit: { min: 0, max: 999 },
     ui: { section: "limits", control: "number" },
   },
-  customStopZoneEnabled: {
-    default: false,
-    ui: { section: "failsafe", control: "toggle" },
-  },
-  customStopZoneX: {
-    default: 0,
-    limit: { min: 0 },
-    ui: { section: "failsafe", control: "number" },
-  },
-  customStopZoneY: {
-    default: 0,
-    limit: { min: 0 },
-    ui: { section: "failsafe", control: "number" },
-  },
-  customStopZoneWidth: {
-    default: 100,
+  savedClickSpeed: {
+    default: 25,
     limit: { min: 1 },
-    ui: { section: "failsafe", control: "number" },
+    ui: { section: "limits", control: "number" },
   },
-  customStopZoneHeight: {
-    default: 100,
-    limit: { min: 1 },
-    ui: { section: "failsafe", control: "number" },
+  savedClickInterval: {
+    default: "s" as ClickInterval,
+    ui: { section: "limits", control: "select" },
+  },
+  savedDutyCycle: {
+    default: 45,
+    limit: { min: 0, max: 100 },
+    ui: { section: "limits", control: "number" },
+  },
+  savedDurationMs: {
+    default: 40,
+    limit: { min: 0 },
+    ui: { section: "limits", control: "number" },
+  },
+  stopZones: {
+    default: [] as StopZone[],
+    ui: { section: "failsafe", control: "custom" },
   },
   disableScreenshots: {
     default: false,
@@ -284,6 +470,10 @@ const SETTINGS_ONLY_FIELDS = {
     default: false,
     ui: { section: "behavior", control: "toggle" },
   },
+  taskSwitcherStopEnabled: {
+    default: true,
+    ui: { section: "behavior", control: "toggle" },
+  },
   extendedClickSpeedLimit: {
     default: false,
     ui: { section: "behavior", control: "toggle" },
@@ -292,27 +482,110 @@ const SETTINGS_ONLY_FIELDS = {
     default: false,
     ui: { section: "startup", control: "toggle" },
   },
+  rememberWindowPosition: {
+    default: true,
+    ui: { section: "startup", control: "toggle" },
+  },
+  windowPosition: {
+    default: { x: null, y: null } as { x: number | null; y: number | null },
+  },
   theme: {
     default: "dark" as Theme,
     ui: { section: "appearance", control: "select" },
   },
-  advancedSequenceLayout: {
-    default: "wide" as AdvancedSequenceLayout,
-    ui: { section: "appearance", control: "select" },
+  themeProfiles: {
+    default: [] as ThemeProfile[],
+    ui: { section: "appearance", control: "custom" },
+  },
+  activeThemeProfileId: {
+    default: "",
+    ui: { section: "appearance", control: "custom" },
   },
   alwaysOnTop: {
     default: false,
     ui: { section: "behavior", control: "toggle" },
   },
+  newClickPointClicks: {
+    default: 1,
+    limit: { min: 1, max: 999999 },
+    ui: { section: "behavior", control: "number" },
+  },
+  newClickPointRadius: {
+    default: 0,
+    limit: { min: 0, max: 9999 },
+    ui: { section: "behavior", control: "number" },
+  },
   accentColor: {
     default: DEFAULT_ACCENT_COLOR,
     ui: { section: "appearance", control: "color" },
+  },
+  indicatorEnabled: {
+    default: true,
+    ui: { section: "appearance", control: "toggle" },
+  },
+  indicatorCorner: {
+    default: "top-right" as IndicatorCorner,
+    ui: { section: "appearance", control: "select" },
+  },
+  indicatorColorMode: {
+    default: "theme" as IndicatorColorMode,
+    ui: { section: "appearance", control: "select" },
+  },
+  indicatorCustomColor: {
+    default: "#ffffff",
+    ui: { section: "appearance", control: "color" },
+  },
+  indicatorSize: {
+    default: 32,
+    limit: { min: 16, max: 512 },
+    ui: { section: "appearance", control: "number" },
+  },
+  indicatorOffsetX: {
+    default: 24,
+    limit: { min: 0, max: 4000 },
+    ui: { section: "appearance", control: "number" },
+  },
+  indicatorOffsetY: {
+    default: 24,
+    limit: { min: 0, max: 4000 },
+    ui: { section: "appearance", control: "number" },
+  },
+  indicatorFlashEnabled: {
+    default: false,
+    ui: { section: "appearance", control: "toggle" },
+  },
+  indicatorFlashDim: {
+    default: 25,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  indicatorCountdownEnabled: {
+    default: false,
+    ui: { section: "appearance", control: "toggle" },
+  },
+  indicatorCountdownMode: {
+    default: "words" as IndicatorCountdownMode,
+    ui: { section: "appearance", control: "select" },
+  },
+  indicatorBackgroundMode: {
+    default: "card" as IndicatorBackgroundMode,
+    ui: { section: "appearance", control: "select" },
+  },
+  indicatorBackgroundStrength: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
   },
   backgroundImage: {
     default: "",
     ui: { section: "appearance", control: "custom" },
   },
   backgroundOpacity: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  windowOpacity: {
     default: 100,
     limit: { min: 0, max: 100 },
     ui: { section: "appearance", control: "number" },
@@ -327,6 +600,11 @@ const SETTINGS_ONLY_FIELDS = {
     limit: { min: 0, max: 20 },
     ui: { section: "appearance", control: "number" },
   },
+  backgroundBlur: {
+    default: 0,
+    limit: { min: 0, max: 20 },
+    ui: { section: "appearance", control: "number" },
+  },
   presets: {
     default: [] as PresetDefinition[],
     ui: { section: "presets", control: "custom" },
@@ -335,12 +613,306 @@ const SETTINGS_ONLY_FIELDS = {
     default: null as PresetId | null,
     ui: { section: "presets", control: "custom" },
   },
+  keybindSimple: {
+    default: "Digit1",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindAdvanced: {
+    default: "Digit2",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindZones: {
+    default: "Digit3",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindClickPoints: {
+    default: "Digit4",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindSettings: {
+    default: "Digit5",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindMode: {
+    default: "",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindInputType: {
+    default: "",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindDoubleClick: {
+    default: "",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindDutyCycleMode: {
+    default: "",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindSpeedRandomization: {
+    default: "",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindLimits: {
+    default: "",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindCornerStop: {
+    default: "",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindEdgeStop: {
+    default: "",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindStopZones: {
+    default: "",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindToggleClickPoints: {
+    default: "",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindStopWhenComplete: {
+    default: "",
+    ui: { section: "keybinds", control: "key" },
+  },
+  keybindMaster: {
+    default: "",
+    ui: { section: "keybinds", control: "key" },
+  },
+  masterKeybindMode: {
+    default: "toggle" as "toggle" | "hold",
+    ui: { section: "keybinds", control: "select" },
+  },
+  perPageAppearance: {
+    default: false,
+    ui: { section: "appearance", control: "toggle" },
+  },
+  backgroundImageSimple: {
+    default: "",
+    ui: { section: "appearance", control: "custom" },
+  },
+  backgroundOpacitySimple: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  windowOpacitySimple: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  panelOpacitySimple: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  panelBlurSimple: {
+    default: 0,
+    limit: { min: 0, max: 20 },
+    ui: { section: "appearance", control: "number" },
+  },
+  backgroundBlurSimple: {
+    default: 0,
+    limit: { min: 0, max: 20 },
+    ui: { section: "appearance", control: "number" },
+  },
+  backgroundImageAdvanced: {
+    default: "",
+    ui: { section: "appearance", control: "custom" },
+  },
+  backgroundOpacityAdvanced: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  windowOpacityAdvanced: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  panelOpacityAdvanced: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  panelBlurAdvanced: {
+    default: 0,
+    limit: { min: 0, max: 20 },
+    ui: { section: "appearance", control: "number" },
+  },
+  backgroundBlurAdvanced: {
+    default: 0,
+    limit: { min: 0, max: 20 },
+    ui: { section: "appearance", control: "number" },
+  },
+  backgroundImageZones: {
+    default: "",
+    ui: { section: "appearance", control: "custom" },
+  },
+  backgroundOpacityZones: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  windowOpacityZones: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  panelOpacityZones: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  panelBlurZones: {
+    default: 0,
+    limit: { min: 0, max: 20 },
+    ui: { section: "appearance", control: "number" },
+  },
+  backgroundBlurZones: {
+    default: 0,
+    limit: { min: 0, max: 20 },
+    ui: { section: "appearance", control: "number" },
+  },
+  backgroundImageClickPoints: {
+    default: "",
+    ui: { section: "appearance", control: "custom" },
+  },
+  backgroundOpacityClickPoints: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  windowOpacityClickPoints: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  panelOpacityClickPoints: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  panelBlurClickPoints: {
+    default: 0,
+    limit: { min: 0, max: 20 },
+    ui: { section: "appearance", control: "number" },
+  },
+  backgroundBlurClickPoints: {
+    default: 0,
+    limit: { min: 0, max: 20 },
+    ui: { section: "appearance", control: "number" },
+  },
+  backgroundImageSettings: {
+    default: "",
+    ui: { section: "appearance", control: "custom" },
+  },
+  backgroundOpacitySettings: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  windowOpacitySettings: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  panelOpacitySettings: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "appearance", control: "number" },
+  },
+  panelBlurSettings: {
+    default: 0,
+    limit: { min: 0, max: 20 },
+    ui: { section: "appearance", control: "number" },
+  },
+  backgroundBlurSettings: {
+    default: 0,
+    limit: { min: 0, max: 20 },
+    ui: { section: "appearance", control: "number" },
+  },
+  taskbarIconEnabled: {
+    default: true,
+    ui: { section: "appearance", control: "toggle" },
+  },
+  taskbarIconTheme: {
+    default: "auto" as IconTheme,
+    ui: { section: "appearance", control: "select" },
+  },
+  taskbarIconColor: {
+    default: "theme" as IconColor,
+    ui: { section: "appearance", control: "select" },
+  },
+  statusBarEnabled: {
+    default: true,
+    ui: { section: "appearance", control: "toggle" },
+  },
+  statusBarPresetEnabled: {
+    default: true,
+    ui: { section: "appearance", control: "toggle" },
+  },
+  statusBarSoundEnabled: {
+    default: true,
+    ui: { section: "appearance", control: "toggle" },
+  },
+  statusBarScaleEnabled: {
+    default: true,
+    ui: { section: "appearance", control: "toggle" },
+  },
+  donationClicksMilestone: {
+    default: 0,
+    limit: { min: 0, max: 1_000_000_000 },
+    ui: { section: "core", control: "number" },
+  },
+  donationTimeMilestone: {
+    default: 0,
+    limit: { min: 0, max: 10_000_000 },
+    ui: { section: "core", control: "number" },
+  },
+  uiScale: {
+    default: UI_SCALE_DEFAULT,
+    limit: { min: UI_SCALE_MIN, max: UI_SCALE_MAX },
+    ui: { section: "appearance", control: "number" },
+  },
+  enableSoundEnabled: {
+    default: true,
+    ui: { section: "sounds", control: "toggle" },
+  },
+  enableSoundPath: {
+    default: "",
+    ui: { section: "sounds", control: "custom" },
+  },
+  enableSoundVolume: {
+    default: 50,
+    limit: { min: 0, max: 100 },
+    ui: { section: "sounds", control: "number" },
+  },
+  disableSoundEnabled: {
+    default: true,
+    ui: { section: "sounds", control: "toggle" },
+  },
+  disableSoundPath: {
+    default: "",
+    ui: { section: "sounds", control: "custom" },
+  },
+  disableSoundVolume: {
+    default: 50,
+    limit: { min: 0, max: 100 },
+    ui: { section: "sounds", control: "number" },
+  },
+  soundVolume: {
+    default: 100,
+    limit: { min: 0, max: 100 },
+    ui: { section: "sounds", control: "number" },
+  },
+  soundMuted: {
+    default: false,
+    ui: { section: "sounds", control: "toggle" },
+  },
 } satisfies Record<string, FieldDef<unknown>>;
-
-export const SETTINGS_FIELD_DEFS = {
-  ...PRESET_FIELDS,
-  ...SETTINGS_ONLY_FIELDS,
-};
 
 type DefaultValues<F extends Record<string, FieldDef<unknown>>> = {
   [K in keyof F]: F[K]["default"];
@@ -351,7 +923,9 @@ function defaultsFromFields<F extends Record<string, FieldDef<unknown>>>(
 ): DefaultValues<F> {
   const output: Record<string, unknown> = {};
   for (const [key, def] of Object.entries(fields)) {
-    output[key] = def.default;
+    output[key] = Array.isArray(def.default)
+      ? def.default.slice()
+      : def.default;
   }
   return output as DefaultValues<F>;
 }
@@ -375,11 +949,8 @@ function limitsFromFields<F extends Record<string, FieldDef<unknown>>>(
   return output;
 }
 
-const PRESET_DEFAULTS = defaultsFromFields(PRESET_FIELDS);
-const SETTINGS_ONLY_DEFAULTS = defaultsFromFields(SETTINGS_ONLY_FIELDS);
-
-type PresetFieldValues = typeof PRESET_DEFAULTS;
-type SettingsOnlyFieldValues = typeof SETTINGS_ONLY_DEFAULTS;
+type PresetFieldValues = DefaultValues<typeof PRESET_FIELDS>;
+type SettingsOnlyFieldValues = DefaultValues<typeof SETTINGS_ONLY_FIELDS>;
 
 export type PresetSnapshot = PresetFieldValues;
 
@@ -396,9 +967,144 @@ export type Settings = PresetFieldValues &
     version: string;
   };
 
-export const PRESET_SNAPSHOT_KEYS = Object.keys(
-  PRESET_FIELDS,
-) as ReadonlyArray<keyof PresetSnapshot>;
+export const FACTORY_PRESETS: PresetDefinition[] = [
+  {
+    id: "factory-standard",
+    name: "Standard Clicking",
+    createdAt: "2025-01-01T00:00:00.000Z",
+    updatedAt: "2025-01-01T00:00:00.000Z",
+    settings: {
+      clickSpeed: 25,
+      clickInterval: "s",
+      inputType: "mouse",
+      keyboardKey: "",
+      keyboardKeyCase: "lower",
+      mouseButton: "Left",
+      mode: "Toggle",
+      hotkey: "ctrl+y",
+      dutyCycleMode: "Click",
+      dutyCycleEnabled: true,
+      dutyCycle: 45,
+      speedRandomizationEnabled: true,
+      speedRandomization: 35,
+      doubleClickEnabled: false,
+      clickLimitEnabled: false,
+      clickLimit: 1000,
+      timeLimitEnabled: false,
+      timeLimit: 60,
+      timeLimitUnit: "s",
+      cornerStopEnabled: true,
+      cornerStopTL: 50,
+      cornerStopTR: 50,
+      cornerStopBL: 50,
+      cornerStopBR: 50,
+      edgeStopEnabled: true,
+      edgeStopTop: 40,
+      edgeStopBottom: 40,
+      edgeStopLeft: 40,
+      edgeStopRight: 40,
+      clickPointsEnabled: false,
+      stopZonesEnabled: false,
+      stopWhenComplete: false,
+      clickPoints: [],
+      processListEnabled: false,
+      processListMode: "whitelist",
+      processListEntries: [],
+    },
+  },
+  {
+    id: "factory-rapid",
+    name: "Rapid Fire",
+    createdAt: "2025-01-01T00:00:00.000Z",
+    updatedAt: "2025-01-01T00:00:00.000Z",
+    settings: {
+      clickSpeed: 100,
+      clickInterval: "s",
+      inputType: "mouse",
+      keyboardKey: "",
+      keyboardKeyCase: "lower",
+      mouseButton: "Left",
+      mode: "Toggle",
+      hotkey: "ctrl+y",
+      dutyCycleMode: "Click",
+      dutyCycleEnabled: true,
+      dutyCycle: 20,
+      speedRandomizationEnabled: true,
+      speedRandomization: 15,
+      doubleClickEnabled: false,
+      clickLimitEnabled: true,
+      clickLimit: 5000,
+      timeLimitEnabled: false,
+      timeLimit: 60,
+      timeLimitUnit: "s",
+      cornerStopEnabled: true,
+      cornerStopTL: 50,
+      cornerStopTR: 50,
+      cornerStopBL: 50,
+      cornerStopBR: 50,
+      edgeStopEnabled: true,
+      edgeStopTop: 40,
+      edgeStopBottom: 40,
+      edgeStopLeft: 40,
+      edgeStopRight: 40,
+      clickPointsEnabled: false,
+      stopZonesEnabled: false,
+      stopWhenComplete: false,
+      clickPoints: [],
+      processListEnabled: false,
+      processListMode: "whitelist",
+      processListEntries: [],
+    },
+  },
+  {
+    id: "factory-precision",
+    name: "Precision Mode",
+    createdAt: "2025-01-01T00:00:00.000Z",
+    updatedAt: "2025-01-01T00:00:00.000Z",
+    settings: {
+      clickSpeed: 10,
+      clickInterval: "s",
+      inputType: "mouse",
+      keyboardKey: "",
+      keyboardKeyCase: "lower",
+      mouseButton: "Left",
+      mode: "Toggle",
+      hotkey: "ctrl+y",
+      dutyCycleMode: "Click",
+      dutyCycleEnabled: true,
+      dutyCycle: 60,
+      speedRandomizationEnabled: true,
+      speedRandomization: 10,
+      doubleClickEnabled: false,
+      clickLimitEnabled: false,
+      clickLimit: 1000,
+      timeLimitEnabled: false,
+      timeLimit: 60,
+      timeLimitUnit: "s",
+      cornerStopEnabled: true,
+      cornerStopTL: 50,
+      cornerStopTR: 50,
+      cornerStopBL: 50,
+      cornerStopBR: 50,
+      edgeStopEnabled: true,
+      edgeStopTop: 40,
+      edgeStopBottom: 40,
+      edgeStopLeft: 40,
+      edgeStopRight: 40,
+      clickPointsEnabled: false,
+      stopZonesEnabled: false,
+      stopWhenComplete: false,
+      clickPoints: [],
+      processListEnabled: false,
+      processListMode: "whitelist",
+      processListEntries: [],
+    },
+  },
+];
+
+export const PRESET_SNAPSHOT_KEYS = Object.keys(PRESET_FIELDS) as ReadonlyArray<
+  keyof PresetSnapshot
+>;
 
 const FIELD_LIMITS = {
   ...limitsFromFields(PRESET_FIELDS),
@@ -408,38 +1114,9 @@ const FIELD_LIMITS = {
 export const SETTINGS_LIMITS = {
   ...FIELD_LIMITS,
   stopBoundary: PRESET_FIELDS.cornerStopTL.limit,
-  position: SETTINGS_ONLY_FIELDS.customStopZoneX.limit,
-  stopZoneDimension: SETTINGS_ONLY_FIELDS.customStopZoneWidth.limit,
-  sequencePointClicks: { min: 1, max: 100000 },
+  clickPointClicks: { min: 1, max: 999999 },
+  clickPointRadius: { min: 0, max: 9999 },
 };
-
-export const SETTINGS_UI_SCHEMA = [
-  {
-    id: "behavior",
-    fields: [
-      "alwaysOnTop",
-      "showStopOverlay",
-      "showStopReason",
-      "strictHotkeyModifiers",
-      "extendedClickSpeedLimit",
-    ],
-  },
-  {
-    id: "startup",
-    fields: ["minimizeToTray"],
-  },
-  {
-    id: "appearance",
-    fields: ["theme", "advancedSequenceLayout", "accentColor"],
-  },
-  {
-    id: "presets",
-    fields: ["presets", "activePresetId"],
-  },
-] as const satisfies ReadonlyArray<{
-  id: string;
-  fields: ReadonlyArray<keyof Settings>;
-}>;
 
 export function clampNumber(
   value: unknown,
@@ -461,8 +1138,20 @@ export function getMaxClickSpeed(
     : DEFAULT_MAX_CLICK_SPEED;
 }
 
+export function getMinIntervalMs(
+  extendedClickSpeedLimit: boolean | null | undefined,
+) {
+  return Math.ceil(1000 / getMaxClickSpeed(extendedClickSpeedLimit));
+}
+
 export function sanitizeBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function sanitizeLegacyBoolean(value: unknown, fallback: boolean): boolean {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return sanitizeBoolean(value, fallback);
 }
 
 export function sanitizeHexColor(value: unknown, fallback: string): string {
@@ -472,6 +1161,20 @@ export function sanitizeHexColor(value: unknown, fallback: string): string {
 
   const normalized = value.trim().toLowerCase();
   return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : fallback;
+}
+
+export function sanitizeFontFamily(value: unknown, fallback: string): string {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const cleaned = value
+    .split("")
+    .filter((char) => char.charCodeAt(0) > 31)
+    .join("")
+    .replace(/["`;\\]/g, "")
+    .trim();
+  return cleaned ? cleaned.slice(0, 128) : fallback;
 }
 
 export function sanitizePresetName(value: unknown): string {
@@ -528,6 +1231,38 @@ function sanitizeFields<F extends Record<string, FieldDef<unknown>>>(
   return result as DefaultValues<F>;
 }
 
+type SpeedRandomizationFields = {
+  speedRandomization: number;
+  speedRandomizationEnabled: boolean;
+};
+
+function migrateSpeedRandomization(
+  target: SpeedRandomizationFields,
+  saved: Record<string, unknown>,
+  defaults: SpeedRandomizationFields,
+): void {
+  const legacyMax = clampNumber(
+    saved.speedRandomizationMax,
+    defaults.speedRandomization,
+    SETTINGS_LIMITS.speedRandomization.min,
+    SETTINGS_LIMITS.speedRandomization.max,
+  );
+
+  target.speedRandomization = clampNumber(
+    saved.speedRandomization ?? saved.speedVariation,
+    legacyMax,
+    SETTINGS_LIMITS.speedRandomization.min,
+    SETTINGS_LIMITS.speedRandomization.max,
+  );
+
+  if (saved.speedRandomizationEnabled === undefined) {
+    target.speedRandomizationEnabled = sanitizeLegacyBoolean(
+      saved.speedVariationEnabled,
+      defaults.speedRandomizationEnabled,
+    );
+  }
+}
+
 function createFallbackPresetId(index: number) {
   return `preset-${index + 1}`;
 }
@@ -537,43 +1272,73 @@ function sanitizeRateInputMode(value: unknown, fallback: RateInputMode) {
 }
 
 function sanitizeSavedPanel(value: unknown, fallback: SavedPanel) {
-  return sanitizeEnum(value, fallback, ["simple", "advanced"]);
+  if (value === "sequence") {
+    return "click-points" as SavedPanel;
+  }
+  return sanitizeEnum(value, fallback, [
+    "simple",
+    "advanced",
+    "zones",
+    "click-points",
+  ]);
 }
 
 function sanitizeTheme(value: unknown, fallback: Theme) {
   return sanitizeEnum(value, fallback, THEME_OPTIONS);
 }
 
-function sanitizeAdvancedSequenceLayout(
-  value: unknown,
-  fallback: AdvancedSequenceLayout,
-) {
-  return sanitizeEnum(value, fallback, ["wide", "tall"]);
+function sanitizeProcessListEntries(value: unknown): ProcessListEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item): ProcessListEntry | null => {
+      if (typeof item === "string") {
+        const name = item.trim().toLowerCase();
+        if (!name) return null;
+        return { name, enabled: true };
+      }
+      if (!item || typeof item !== "object") return null;
+      const candidate = item as Partial<ProcessListEntry>;
+      const name =
+        typeof candidate.name === "string"
+          ? candidate.name.trim().toLowerCase()
+          : "";
+      if (!name) return null;
+      const enabled =
+        typeof candidate.enabled === "boolean" ? candidate.enabled : true;
+      return { name, enabled };
+    })
+    .filter((entry): entry is ProcessListEntry => entry !== null);
 }
 
-function sanitizeSequencePoints(value: unknown): SequencePoint[] {
+function sanitizeClickPoints(value: unknown): ClickPoint[] {
   if (!Array.isArray(value)) return [];
 
   return value
     .map((point) => {
       if (!point || typeof point !== "object") return null;
-      const candidate = point as Partial<SequencePoint>;
+      const candidate = point as Partial<ClickPoint>;
       const id =
         typeof candidate.id === "string" && candidate.id.trim()
           ? candidate.id.trim()
-          : createSequencePointId();
+          : createClickPointId();
       const x =
         typeof candidate.x === "number" && Number.isFinite(candidate.x)
-          ? Math.trunc(candidate.x)
+          ? clampNumber(Math.trunc(candidate.x), 0, INT32_MIN, INT32_MAX)
           : null;
       const y =
         typeof candidate.y === "number" && Number.isFinite(candidate.y)
-          ? Math.trunc(candidate.y)
+          ? clampNumber(Math.trunc(candidate.y), 0, INT32_MIN, INT32_MAX)
           : null;
       const clicks =
-        typeof candidate.clicks === "number" && Number.isFinite(candidate.clicks)
+        typeof candidate.clicks === "number" &&
+        Number.isFinite(candidate.clicks)
           ? Math.trunc(candidate.clicks)
           : 1;
+      const radius =
+        typeof candidate.radius === "number" &&
+        Number.isFinite(candidate.radius)
+          ? Math.trunc(candidate.radius)
+          : 0;
 
       if (x === null || y === null) return null;
 
@@ -584,19 +1349,97 @@ function sanitizeSequencePoints(value: unknown): SequencePoint[] {
         clicks: clampNumber(
           clicks,
           1,
-          SETTINGS_LIMITS.sequencePointClicks.min,
-          SETTINGS_LIMITS.sequencePointClicks.max,
+          SETTINGS_LIMITS.clickPointClicks.min,
+          SETTINGS_LIMITS.clickPointClicks.max,
+        ),
+        radius: clampNumber(
+          radius,
+          0,
+          SETTINGS_LIMITS.clickPointRadius.min,
+          SETTINGS_LIMITS.clickPointRadius.max,
         ),
       };
     })
-    .filter((point): point is SequencePoint => point !== null);
+    .filter((point): point is ClickPoint => point !== null);
+}
+
+function sanitizeStopZones(value: unknown): StopZone[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .slice(0, STOP_ZONE_MAX_COUNT)
+    .map((zone) => {
+      if (!zone || typeof zone !== "object") return null;
+      const candidate = zone as Partial<StopZone>;
+      const id =
+        typeof candidate.id === "string" && candidate.id.trim()
+          ? candidate.id.trim()
+          : createStopZoneId();
+      const x =
+        typeof candidate.x === "number" && Number.isFinite(candidate.x)
+          ? clampNumber(
+              Math.trunc(candidate.x),
+              0,
+              -STOP_ZONE_OFFSET_LIMIT,
+              STOP_ZONE_OFFSET_LIMIT,
+            )
+          : 0;
+      const y =
+        typeof candidate.y === "number" && Number.isFinite(candidate.y)
+          ? clampNumber(
+              Math.trunc(candidate.y),
+              0,
+              -STOP_ZONE_OFFSET_LIMIT,
+              STOP_ZONE_OFFSET_LIMIT,
+            )
+          : 0;
+      const width =
+        typeof candidate.width === "number" && Number.isFinite(candidate.width)
+          ? clampNumber(
+              Math.max(1, Math.trunc(candidate.width)),
+              100,
+              1,
+              STOP_ZONE_SIZE_LIMIT,
+            )
+          : 100;
+      const height =
+        typeof candidate.height === "number" &&
+        Number.isFinite(candidate.height)
+          ? clampNumber(
+              Math.max(1, Math.trunc(candidate.height)),
+              100,
+              1,
+              STOP_ZONE_SIZE_LIMIT,
+            )
+          : 100;
+      const action =
+        candidate.action === "stop" ||
+        candidate.action === "pause" ||
+        candidate.action === "start"
+          ? candidate.action
+          : ("stop" as const);
+
+      return { id, x, y, width, height, action };
+    })
+    .filter((zone): zone is StopZone => zone !== null);
 }
 
 export function createDefaultSettings(version: string): Settings {
   return {
     version,
-    ...PRESET_DEFAULTS,
-    ...SETTINGS_ONLY_DEFAULTS,
+    ...defaultsFromFields(PRESET_FIELDS),
+    ...defaultsFromFields(SETTINGS_ONLY_FIELDS),
+  };
+}
+
+export function withFactoryPresets(settings: Settings): Settings {
+  return {
+    ...settings,
+    presets: FACTORY_PRESETS.map((preset) => ({
+      ...preset,
+      settings: { ...preset.settings },
+    })),
+    activePresetId: null,
   };
 }
 
@@ -638,7 +1481,27 @@ export function createPresetDefinition(
   };
 }
 
-function sanitizePresetSnapshot(
+export function getPresetSummary(snapshot: PresetSnapshot): string {
+  const parts: string[] = [];
+
+  const speedStr = `${snapshot.clickSpeed}/${snapshot.clickInterval}`;
+  const inputStr =
+    snapshot.inputType === "keyboard" && snapshot.keyboardKey
+      ? `${snapshot.keyboardKey}`
+      : snapshot.mouseButton;
+  parts.push(`${speedStr}  ${inputStr}`);
+
+  if (snapshot.clickLimitEnabled)
+    parts.push(`Limit:${snapshot.clickLimit.toLocaleString()}`);
+  if (snapshot.timeLimitEnabled)
+    parts.push(`Time:${snapshot.timeLimit}${snapshot.timeLimitUnit}`);
+  if (snapshot.clickPoints.length > 0)
+    parts.push(`${snapshot.clickPoints.length} pts`);
+
+  return parts.join(" | ");
+}
+
+export function sanitizePresetSnapshot(
   input: unknown,
   defaults: PresetSnapshot,
 ): PresetSnapshot {
@@ -665,25 +1528,49 @@ function sanitizePresetSnapshot(
     MOUSE_BUTTON_OPTIONS,
   );
   snapshot.mode = sanitizeEnum(saved.mode, defaults.mode, MODE_OPTIONS);
+  snapshot.dutyCycleMode = sanitizeEnum(
+    saved.dutyCycleMode,
+    defaults.dutyCycleMode,
+    DUTY_CYCLE_MODE_OPTIONS,
+  );
   snapshot.timeLimitUnit = sanitizeEnum(
     saved.timeLimitUnit,
     defaults.timeLimitUnit,
     TIME_LIMIT_UNIT_OPTIONS,
   );
-  snapshot.sequencePoints = sanitizeSequencePoints(saved.sequencePoints);
+  snapshot.processListMode = sanitizeEnum(
+    saved.processListMode,
+    defaults.processListMode,
+    ["whitelist", "blacklist"],
+  );
+  snapshot.clickPoints = sanitizeClickPoints(
+    saved.clickPoints ?? (saved.sequencePoints as ClickPoint[] | undefined),
+  );
+  if (saved.clickPointsEnabled === undefined) {
+    snapshot.clickPointsEnabled = sanitizeLegacyBoolean(
+      saved.sequenceEnabled,
+      false,
+    );
+  }
+  snapshot.processListEntries = sanitizeProcessListEntries(
+    saved.processListEntries,
+  );
+  migrateSpeedRandomization(snapshot, saved, defaults);
 
   return snapshot;
 }
 
-function sanitizePresets(input: unknown, defaults: Settings): PresetDefinition[] {
+function sanitizePresets(
+  input: unknown,
+  defaults: Settings,
+): PresetDefinition[] {
   if (!Array.isArray(input)) {
-    return [];
+    return FACTORY_PRESETS;
   }
 
   const defaultSnapshot = buildPresetSnapshot(defaults);
 
   return input
-    .slice(0, MAX_PRESETS)
     .map((preset, index) => {
       if (!preset || typeof preset !== "object") {
         return null;
@@ -723,20 +1610,13 @@ export function sanitizeSettings(
 ): Settings {
   const defaults = createDefaultSettings(version);
   const saved = (input ?? {}) as Partial<Settings> & {
-    speedVariationMax?: unknown;
+    speedRandomizationMax?: unknown;
     telemetryEnabled?: unknown;
   };
   const savedRecord = saved as Record<string, unknown>;
 
   const presetSettings = sanitizeFields(PRESET_FIELDS, savedRecord);
   const settingsOnly = sanitizeFields(SETTINGS_ONLY_FIELDS, savedRecord);
-
-  const legacySpeedVariation = clampNumber(
-    saved.speedVariationMax,
-    defaults.speedVariation,
-    SETTINGS_LIMITS.speedVariation.min,
-    SETTINGS_LIMITS.speedVariation.max,
-  );
 
   presetSettings.clickInterval = sanitizeEnum(
     saved.clickInterval,
@@ -758,28 +1638,63 @@ export function sanitizeSettings(
     MOUSE_BUTTON_OPTIONS,
   );
   presetSettings.mode = sanitizeEnum(saved.mode, defaults.mode, MODE_OPTIONS);
+  presetSettings.dutyCycleMode = sanitizeEnum(
+    saved.dutyCycleMode ?? (saved as Record<string, unknown>).clickDurationMode,
+    defaults.dutyCycleMode,
+    DUTY_CYCLE_MODE_OPTIONS,
+  );
   presetSettings.timeLimitUnit = sanitizeEnum(
     saved.timeLimitUnit,
     defaults.timeLimitUnit,
     TIME_LIMIT_UNIT_OPTIONS,
   );
-  presetSettings.sequencePoints = sanitizeSequencePoints(saved.sequencePoints);
-  presetSettings.speedVariation = clampNumber(
-    saved.speedVariation,
-    legacySpeedVariation,
-    SETTINGS_LIMITS.speedVariation.min,
-    SETTINGS_LIMITS.speedVariation.max,
+  presetSettings.processListMode = sanitizeEnum(
+    saved.processListMode,
+    defaults.processListMode,
+    ["whitelist", "blacklist"],
   );
+  presetSettings.clickPoints = sanitizeClickPoints(
+    saved.clickPoints ??
+      (savedRecord.sequencePoints as ClickPoint[] | undefined),
+  );
+  if (savedRecord.clickPointsEnabled === undefined) {
+    presetSettings.clickPointsEnabled = sanitizeLegacyBoolean(
+      savedRecord.sequenceEnabled,
+      false,
+    );
+  }
+  presetSettings.processListEntries = sanitizeProcessListEntries(
+    saved.processListEntries,
+  );
+  migrateSpeedRandomization(presetSettings, savedRecord, defaults);
 
   settingsOnly.rateInputMode = sanitizeRateInputMode(
     saved.rateInputMode,
     defaults.rateInputMode,
   );
-  settingsOnly.lastPanel = sanitizeSavedPanel(saved.lastPanel, defaults.lastPanel);
+  settingsOnly.lastPanel = sanitizeSavedPanel(
+    saved.lastPanel,
+    defaults.lastPanel,
+  );
   settingsOnly.theme = sanitizeTheme(saved.theme, defaults.theme);
-  settingsOnly.advancedSequenceLayout = sanitizeAdvancedSequenceLayout(
-    saved.advancedSequenceLayout,
-    defaults.advancedSequenceLayout,
+  const themeProfiles = sanitizeThemeProfiles(saved.themeProfiles);
+  const savedActiveThemeProfileId =
+    typeof saved.activeThemeProfileId === "string"
+      ? saved.activeThemeProfileId
+      : "";
+  settingsOnly.themeProfiles = themeProfiles;
+  settingsOnly.activeThemeProfileId = themeProfiles.some(
+    (profile) => profile.id === savedActiveThemeProfileId,
+  )
+    ? savedActiveThemeProfileId
+    : "";
+  if (settingsOnly.theme === "custom" && !settingsOnly.activeThemeProfileId) {
+    settingsOnly.theme = "dark";
+  }
+  settingsOnly.masterKeybindMode = sanitizeEnum(
+    saved.masterKeybindMode,
+    defaults.masterKeybindMode,
+    ["toggle", "hold"],
   );
   settingsOnly.alwaysOnTop = sanitizeBoolean(
     saved.alwaysOnTop,
@@ -789,6 +1704,137 @@ export function sanitizeSettings(
     saved.accentColor,
     defaults.accentColor,
   );
+  settingsOnly.elevationNoticeEnabled = sanitizeBoolean(
+    saved.elevationNoticeEnabled,
+    defaults.elevationNoticeEnabled,
+  );
+  settingsOnly.alwaysRunAsAdmin = sanitizeBoolean(
+    saved.alwaysRunAsAdmin,
+    defaults.alwaysRunAsAdmin,
+  );
+  settingsOnly.clickSoundEnabled = sanitizeBoolean(
+    saved.clickSoundEnabled,
+    defaults.clickSoundEnabled,
+  );
+  settingsOnly.clickSoundPath =
+    typeof saved.clickSoundPath === "string"
+      ? saved.clickSoundPath
+      : defaults.clickSoundPath;
+  settingsOnly.clickSoundAllowFastRate = sanitizeBoolean(
+    saved.clickSoundAllowFastRate,
+    defaults.clickSoundAllowFastRate,
+  );
+  settingsOnly.clickSoundVolume = clampNumber(
+    saved.clickSoundVolume,
+    defaults.clickSoundVolume,
+    0,
+    100,
+  );
+  settingsOnly.recentSoundPaths = sanitizeRecentSoundPaths(
+    saved.recentSoundPaths,
+  );
+  for (const key of [
+    "enableSoundTrimStart",
+    "enableSoundTrimEnd",
+    "disableSoundTrimStart",
+    "disableSoundTrimEnd",
+    "clickSoundTrimStart",
+    "clickSoundTrimEnd",
+  ] as const) {
+    settingsOnly[key] = Math.round(
+      clampNumber(saved[key], defaults[key], 0, SOUND_TRIM_MAX_MS),
+    );
+  }
+  settingsOnly.fancyTitle = sanitizeBoolean(
+    saved.fancyTitle,
+    defaults.fancyTitle,
+  );
+  settingsOnly.titleFont = sanitizeFontFamily(
+    saved.titleFont,
+    defaults.titleFont,
+  );
+  settingsOnly.fontFamily = sanitizeFontFamily(
+    saved.fontFamily,
+    defaults.fontFamily,
+  );
+  settingsOnly.indicatorCorner = sanitizeEnum(
+    saved.indicatorCorner,
+    defaults.indicatorCorner,
+    INDICATOR_CORNER_OPTIONS,
+  );
+  settingsOnly.indicatorColorMode = sanitizeEnum(
+    saved.indicatorColorMode,
+    defaults.indicatorColorMode,
+    INDICATOR_COLOR_MODE_OPTIONS,
+  );
+  settingsOnly.indicatorCustomColor = sanitizeHexColor(
+    saved.indicatorCustomColor,
+    defaults.indicatorCustomColor,
+  );
+  const rawCountdownMode = saved.indicatorCountdownMode as string | undefined;
+  const savedCountdownMode =
+    rawCountdownMode === "off"
+      ? "plain"
+      : typeof rawCountdownMode === "string"
+        ? rawCountdownMode
+        : saved.indicatorCountdownEnabled === true
+          ? "words"
+          : undefined;
+  settingsOnly.indicatorCountdownMode = sanitizeEnum(
+    savedCountdownMode,
+    defaults.indicatorCountdownMode,
+    INDICATOR_COUNTDOWN_MODE_OPTIONS,
+  );
+  settingsOnly.indicatorBackgroundMode = sanitizeEnum(
+    saved.indicatorBackgroundMode,
+    defaults.indicatorBackgroundMode,
+    INDICATOR_BACKGROUND_MODE_OPTIONS,
+  );
+  settingsOnly.indicatorCountdownEnabled =
+    typeof saved.indicatorCountdownEnabled === "boolean"
+      ? saved.indicatorCountdownEnabled
+      : savedCountdownMode !== undefined;
+
+  // Sanitize stopZones from raw data (skip sanitizeFields default)
+  const rawStopZones = savedRecord.stopZones;
+  if (Array.isArray(rawStopZones)) {
+    settingsOnly.stopZones = sanitizeStopZones(rawStopZones);
+  }
+
+  const rawWindowPos = savedRecord.windowPosition;
+  if (
+    rawWindowPos &&
+    typeof rawWindowPos === "object" &&
+    "x" in (rawWindowPos as Record<string, unknown>) &&
+    "y" in (rawWindowPos as Record<string, unknown>)
+  ) {
+    const r = rawWindowPos as Record<string, unknown>;
+    settingsOnly.windowPosition = {
+      x: typeof r.x === "number" && Number.isFinite(r.x) ? r.x : null,
+      y: typeof r.y === "number" && Number.isFinite(r.y) ? r.y : null,
+    };
+  }
+
+  // Migration: old customStopZoneEnabled + coords → stopZones[0]
+  if (settingsOnly.stopZones.length === 0) {
+    const oldEnabled = savedRecord.customStopZoneEnabled as boolean | undefined;
+    if (oldEnabled) {
+      const migratedZones = sanitizeStopZones([
+        {
+          id: createStopZoneId(),
+          x: savedRecord.customStopZoneX,
+          y: savedRecord.customStopZoneY,
+          width: savedRecord.customStopZoneWidth,
+          height: savedRecord.customStopZoneHeight,
+          action: "stop",
+        },
+      ]);
+      settingsOnly.stopZones = migratedZones;
+      if (migratedZones.length > 0) {
+        presetSettings.stopZonesEnabled = true;
+      }
+    }
+  }
   presetSettings.clickSpeed = clampNumber(
     saved.clickSpeed,
     presetSettings.clickSpeed,
@@ -802,6 +1848,27 @@ export function sanitizeSettings(
     settingsOnly.presets.some((preset) => preset.id === saved.activePresetId)
       ? saved.activePresetId
       : null;
+
+  if (
+    presetSettings.dutyCycleMode === "Hold" &&
+    savedRecord.savedDurationMs === undefined
+  ) {
+    settingsOnly.savedDurationMs =
+      settingsOnly.durationHours * 3_600_000 +
+      settingsOnly.durationMinutes * 60_000 +
+      settingsOnly.durationSeconds * 1_000 +
+      settingsOnly.durationMilliseconds;
+  }
+
+  if (presetSettings.dutyCycleMode === "Hold") {
+    presetSettings.clickSpeed = 1;
+    presetSettings.clickInterval = "d";
+    presetSettings.dutyCycle = 100;
+    settingsOnly.durationHours = 24;
+    settingsOnly.durationMinutes = 0;
+    settingsOnly.durationSeconds = 0;
+    settingsOnly.durationMilliseconds = 0;
+  }
 
   return {
     version,

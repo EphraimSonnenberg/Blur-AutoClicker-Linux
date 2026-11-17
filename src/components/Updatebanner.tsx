@@ -1,13 +1,28 @@
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
-import { useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { logDiagnostic } from "../diagnostics";
+import { invoke } from "@tauri-apps/api/core";
+import { useRef, useState } from "react";
 
+import { isPortableMode } from "../store";
+import {
+  compareVersions,
+  parseChangelog,
+  type ChangelogEntry,
+} from "../changelog";
+import UpdatePreviewModal from "./UpdatePreviewModal";
 import UnavailableReason from "./UnavailableReason";
 import "./Updatebanner.css";
+
+const GITHUB_RELEASES_URL =
+  "https://github.com/Blur009/Blur-AutoClicker/releases/latest";
 
 interface UpdateBannerProps {
   currentVersion: string;
   latestVersion: string;
+  portable?: boolean;
+  preview?: boolean;
 }
 
 type UpdateStage = "ready" | "installing" | "restart-required" | "error";
@@ -15,11 +30,84 @@ type UpdateStage = "ready" | "installing" | "restart-required" | "error";
 export default function UpdateBanner({
   currentVersion,
   latestVersion,
+  portable = false,
+  preview = false,
 }: UpdateBannerProps) {
+  const previewMode = preview;
   const [stage, setStage] = useState<UpdateStage>("ready");
   const [statusText, setStatusText] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewEntries, setPreviewEntries] = useState<ChangelogEntry[] | null>(
+    null,
+  );
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState(false);
+  const previewFetchedRef = useRef(false);
+
+  const handlePreview = async () => {
+    if (previewMode) return;
+    if (previewOpen) {
+      setPreviewOpen(false);
+      return;
+    }
+    setPreviewOpen(true);
+    if (previewFetchedRef.current) return;
+
+    setPreviewLoading(true);
+    setPreviewError(false);
+    try {
+      const raw = await invoke<string>("fetch_changelog");
+      const all = parseChangelog(raw);
+      const newer = all.filter(
+        (entry) => compareVersions(entry.version, currentVersion) > 0,
+      );
+      setPreviewEntries(newer.length > 0 ? newer : all.slice(0, 1));
+      previewFetchedRef.current = true;
+    } catch (err) {
+      logDiagnostic("Updatebanner.changelogPreview", {
+        error: String(err),
+      });
+      setPreviewError(true);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const openReleasePage = async () => {
+    try {
+      await openUrl(GITHUB_RELEASES_URL);
+    } catch (err) {
+      logDiagnostic("Updatebanner.openRelease", {
+        error: String(err),
+      });
+      setStage("error");
+      setStatusText("Could not open the download page.");
+    }
+  };
 
   const handleUpdate = async () => {
+    if (previewMode) return;
+    if (portable) {
+      await openReleasePage();
+      return;
+    }
+
+    // Guard against the brief window where `portable` is still the false
+    // default while the real get_app_info result is in flight.
+    try {
+      if (await isPortableMode()) {
+        await openUrl(GITHUB_RELEASES_URL);
+        return;
+      }
+    } catch (err) {
+      logDiagnostic("Updatebanner.openRelease", {
+        error: String(err),
+      });
+      setStage("error");
+      setStatusText("Update check failed. Try again.");
+      return;
+    }
+
     try {
       setStage("installing");
       setStatusText("Preparing update...");
@@ -48,17 +136,22 @@ export default function UpdateBanner({
       setStage("restart-required");
       setStatusText("Update installed. Restart to apply it.");
     } catch (err) {
-      console.error("Failed to install update:", err);
+      logDiagnostic("Updatebanner.install", {
+        error: String(err),
+      });
       setStage("error");
       setStatusText("Update install failed.");
     }
   };
 
   const handleRestart = async () => {
+    if (previewMode) return;
     try {
       await relaunch();
     } catch (err) {
-      console.error("Failed to relaunch app:", err);
+      logDiagnostic("Updatebanner.relaunch", {
+        error: String(err),
+      });
       setStage("error");
       setStatusText("Restart failed. Please reopen the app manually.");
     }
@@ -89,18 +182,39 @@ export default function UpdateBanner({
           Restart to Apply Update
         </button>
       ) : (
-        <UnavailableReason reason={installDisabledReason}>
+        <UnavailableReason
+          reason={portable ? undefined : installDisabledReason}
+        >
           <button
             className="update-banner-btn"
             onClick={handleUpdate}
-            disabled={stage === "installing"}
+            disabled={!portable && stage === "installing"}
           >
-            {stage === "installing"
-              ? "Installing..."
-              : "Download and Install"}
+            {portable
+              ? "Download from GitHub"
+              : stage === "installing"
+                ? "Installing..."
+                : "Download and Install"}
           </button>
         </UnavailableReason>
       )}
+      {stage !== "restart-required" && (
+        <button
+          className="update-banner-btn update-banner-preview-btn"
+          onClick={handlePreview}
+        >
+          Preview Changes
+        </button>
+      )}
+      <UpdatePreviewModal
+        open={previewOpen}
+        currentVersion={currentVersion}
+        latestVersion={latestVersion}
+        loading={previewLoading}
+        error={previewError}
+        entries={previewEntries}
+        onClose={() => setPreviewOpen(false)}
+      />
     </div>
   );
 }

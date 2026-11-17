@@ -34,17 +34,94 @@ const MODIFIER_CODES = new Set([
   "OSRight",
 ]);
 
+const MODIFIER_CODE_MAIN_KEY_MAP: Record<string, string> = {
+  ControlLeft: "leftctrl",
+  ControlRight: "rightctrl",
+  ShiftLeft: "leftshift",
+  ShiftRight: "rightshift",
+  AltLeft: "leftalt",
+  AltRight: "rightalt",
+  MetaLeft: "leftsuper",
+  MetaRight: "rightsuper",
+  OSLeft: "leftsuper",
+  OSRight: "rightsuper",
+};
+
 const SHIFTED_SYMBOL_BASE_MAP: Record<string, string> = {
   "?": "/",
   ":": ";",
-  "\"": "'",
+  '"': "'",
   "{": "[",
   "}": "]",
   "|": "\\",
   "+": "=",
-  "_": "-",
+  _: "-",
   "~": "`",
   ">": "<",
+};
+
+const PHYSICAL_KEY_CODES = [
+  "Backquote",
+  "Minus",
+  "Equal",
+  "BracketLeft",
+  "BracketRight",
+  "Backslash",
+  "Semicolon",
+  "Quote",
+  "Comma",
+  "Period",
+  "Slash",
+  "IntlBackslash",
+];
+
+const PHYSICAL_KEY_CODE_SET = new Set(PHYSICAL_KEY_CODES);
+
+const PHYSICAL_KEY_CODE_BY_LOWER: Record<string, string> = Object.fromEntries(
+  PHYSICAL_KEY_CODES.map((code): [string, string] => [
+    code.toLowerCase(),
+    code,
+  ]),
+);
+
+const PHYSICAL_KEY_DISPLAY_FALLBACK: Record<string, string> = {
+  Backquote: "`",
+  Minus: "-",
+  Equal: "=",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Backslash: "\\",
+  Semicolon: ";",
+  Quote: "'",
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  IntlBackslash: "<",
+};
+
+const SYMBOL_TO_PHYSICAL_KEY_CODE: Record<string, string> = {
+  "`": "Backquote",
+  "~": "Backquote",
+  "-": "Minus",
+  _: "Minus",
+  "=": "Equal",
+  "+": "Equal",
+  "[": "BracketLeft",
+  "{": "BracketLeft",
+  "]": "BracketRight",
+  "}": "BracketRight",
+  "\\": "Backslash",
+  "|": "Backslash",
+  ";": "Semicolon",
+  ":": "Semicolon",
+  "'": "Quote",
+  '"': "Quote",
+  ",": "Comma",
+  ".": "Period",
+  "/": "Slash",
+  "?": "Slash",
+  "<": "IntlBackslash",
+  ">": "IntlBackslash",
 };
 
 const NUMPAD_CODE_MAP: Record<string, string> = {
@@ -107,6 +184,161 @@ const NUMPAD_LOCATION_KEY_MAP: Record<string, string> = {
   ".": "numpaddecimal",
 };
 
+const MOUSE_TOKEN_MAP: Record<string, string> = {
+  mouseleft: "mouseleft",
+  leftmouse: "mouseleft",
+  leftbutton: "mouseleft",
+  mouse1: "mouseleft",
+  lmb: "mouseleft",
+  mouseright: "mouseright",
+  rightmouse: "mouseright",
+  rightbutton: "mouseright",
+  mouse2: "mouseright",
+  rmb: "mouseright",
+  mousemiddle: "mousemiddle",
+  middlemouse: "mousemiddle",
+  middlebutton: "mousemiddle",
+  mouse3: "mousemiddle",
+  mmb: "mousemiddle",
+  scrollbutton: "mousemiddle",
+  middleclick: "mousemiddle",
+  mouse4: "mouse4",
+  xbutton1: "mouse4",
+  mouseback: "mouse4",
+  browserback: "mouse4",
+  backbutton: "mouse4",
+  mouse5: "mouse5",
+  xbutton2: "mouse5",
+  mouseforward: "mouse5",
+  browserforward: "mouse5",
+  forwardbutton: "mouse5",
+};
+
+const NUMPAD_TOKEN_MAP: Record<string, string> = {
+  numpadadd: "numpadadd",
+  numadd: "numpadadd",
+  numplus: "numpadadd",
+  numpadplus: "numpadadd",
+  numpadsubtract: "numpadsubtract",
+  numsubtract: "numpadsubtract",
+  numsub: "numpadsubtract",
+  numminus: "numpadsubtract",
+  numpadminus: "numpadsubtract",
+  numpadmultiply: "numpadmultiply",
+  nummultiply: "numpadmultiply",
+  nummul: "numpadmultiply",
+  numpadmul: "numpadmultiply",
+  numpaddivide: "numpaddivide",
+  numdivide: "numpaddivide",
+  numdiv: "numpaddivide",
+  numpaddiv: "numpaddivide",
+  numpaddecimal: "numpaddecimal",
+  numdecimal: "numpaddecimal",
+  numdot: "numpaddecimal",
+  numdel: "numpaddecimal",
+  numpadpoint: "numpaddecimal",
+};
+
+const NAMED_KEY_MAP: Record<string, string> = {
+  enter: "enter",
+  tab: "tab",
+  spacebar: "space",
+  backspace: "backspace",
+  delete: "delete",
+  insert: "insert",
+  home: "home",
+  end: "end",
+  pageup: "pageup",
+  pagedown: "pagedown",
+  arrowup: "up",
+  arrowdown: "down",
+  arrowleft: "left",
+  arrowright: "right",
+  capslock: "capslock",
+  numlock: "numlock",
+  scrolllock: "scrolllock",
+  printscreen: "printscreen",
+  pause: "pause",
+  break: "pause",
+  contextmenu: "menu",
+  apps: "menu",
+  menu: "menu",
+  escape: "escape",
+  esc: "escape",
+  leftctrl: "leftctrl",
+  ctrlleft: "leftctrl",
+  lctrl: "leftctrl",
+  rightctrl: "rightctrl",
+  ctrlright: "rightctrl",
+  rctrl: "rightctrl",
+  leftshift: "leftshift",
+  shiftleft: "leftshift",
+  lshift: "leftshift",
+  rightshift: "rightshift",
+  shiftright: "rightshift",
+  rshift: "rightshift",
+  leftalt: "leftalt",
+  altleft: "leftalt",
+  lalt: "leftalt",
+  rightalt: "rightalt",
+  altright: "rightalt",
+  ralt: "rightalt",
+  altgr: "rightalt",
+  leftsuper: "leftsuper",
+  superleft: "leftsuper",
+  leftwin: "leftsuper",
+  winleft: "leftsuper",
+  lwin: "leftsuper",
+  rightsuper: "rightsuper",
+  superright: "rightsuper",
+  rightwin: "rightsuper",
+  winright: "rightsuper",
+  rwin: "rightsuper",
+};
+
+const NAMED_DISPLAY_MAP: Record<string, string> = {
+  up: "Up",
+  down: "Down",
+  left: "Left",
+  right: "Right",
+  pageup: "Page Up",
+  pagedown: "Page Down",
+  backspace: "Backspace",
+  delete: "Delete",
+  insert: "Insert",
+  home: "Home",
+  end: "End",
+  enter: "Enter",
+  tab: "Tab",
+  space: "Space",
+  escape: "Esc",
+  esc: "Esc",
+  capslock: "Caps Lock",
+  numlock: "Num Lock",
+  scrolllock: "Scroll Lock",
+  printscreen: "Print Screen",
+  pause: "Pause",
+  menu: "Menu",
+  leftctrl: "Left Ctrl",
+  rightctrl: "Right Ctrl",
+  leftshift: "Left Shift",
+  rightshift: "Right Shift",
+  leftalt: "Left Alt",
+  rightalt: "Right Alt",
+  leftsuper: "Left Super",
+  rightsuper: "Right Super",
+  numpadadd: "Num +",
+  numpadsubtract: "Num -",
+  numpadmultiply: "Num *",
+  numpaddivide: "Num /",
+  numpaddecimal: "Num .",
+  mouseleft: "Mouse Left",
+  mouseright: "Mouse Right",
+  mousemiddle: "Mouse Middle",
+  mouse4: "Mouse Back",
+  mouse5: "Mouse Forward",
+};
+
 type LayoutMapLike = {
   get(code: string): string | undefined;
 };
@@ -166,6 +398,14 @@ export const defaultHotkeyLabels: HotkeyDisplayLabels = {
     printscreen: "Print Screen",
     pause: "Pause",
     menu: "Menu",
+    leftctrl: "Left Ctrl",
+    rightctrl: "Right Ctrl",
+    leftshift: "Left Shift",
+    rightshift: "Right Shift",
+    leftalt: "Left Alt",
+    rightalt: "Right Alt",
+    leftsuper: "Left Super",
+    rightsuper: "Right Super",
     mouseleft: "Mouse Left",
     mouseright: "Mouse Right",
     mousemiddle: "Scroll Button",
@@ -197,38 +437,7 @@ function normalizeModifierToken(token: string): string | null {
 
 function normalizeMouseToken(token: string): string | null {
   const lower = token.trim().toLowerCase();
-
-  const mouseMap: Record<string, string> = {
-    mouseleft: "mouseleft",
-    leftmouse: "mouseleft",
-    leftbutton: "mouseleft",
-    mouse1: "mouseleft",
-    lmb: "mouseleft",
-    mouseright: "mouseright",
-    rightmouse: "mouseright",
-    rightbutton: "mouseright",
-    mouse2: "mouseright",
-    rmb: "mouseright",
-    mousemiddle: "mousemiddle",
-    middlemouse: "mousemiddle",
-    middlebutton: "mousemiddle",
-    mouse3: "mousemiddle",
-    mmb: "mousemiddle",
-    scrollbutton: "mousemiddle",
-    middleclick: "mousemiddle",
-    mouse4: "mouse4",
-    xbutton1: "mouse4",
-    mouseback: "mouse4",
-    browserback: "mouse4",
-    backbutton: "mouse4",
-    mouse5: "mouse5",
-    xbutton2: "mouse5",
-    mouseforward: "mouse5",
-    browserforward: "mouse5",
-    forwardbutton: "mouse5",
-  };
-
-  return mouseMap[lower] ?? null;
+  return MOUSE_TOKEN_MAP[lower] ?? null;
 }
 
 function normalizeNumpadToken(token: string): string | null {
@@ -242,70 +451,17 @@ function normalizeNumpadToken(token: string): string | null {
     return `numpad${lower.slice(3)}`;
   }
 
-  const numpadMap: Record<string, string> = {
-    numpadadd: "numpadadd",
-    numadd: "numpadadd",
-    numplus: "numpadadd",
-    numpadplus: "numpadadd",
-    numpadsubtract: "numpadsubtract",
-    numsubtract: "numpadsubtract",
-    numsub: "numpadsubtract",
-    numminus: "numpadsubtract",
-    numpadminus: "numpadsubtract",
-    numpadmultiply: "numpadmultiply",
-    nummultiply: "numpadmultiply",
-    nummul: "numpadmultiply",
-    numpadmul: "numpadmultiply",
-    numpaddivide: "numpaddivide",
-    numdivide: "numpaddivide",
-    numdiv: "numpaddivide",
-    numpaddiv: "numpaddivide",
-    numpaddecimal: "numpaddecimal",
-    numdecimal: "numpaddecimal",
-    numdot: "numpaddecimal",
-    numdel: "numpaddecimal",
-    numpadpoint: "numpaddecimal",
-  };
-
-  return numpadMap[lower] ?? null;
+  return NUMPAD_TOKEN_MAP[lower] ?? null;
 }
 
 function normalizeNamedKey(key: string): string | null {
   const lower = key.toLowerCase();
 
-  const keyMap: Record<string, string> = {
-    enter: "enter",
-    tab: "tab",
-    spacebar: "space",
-    backspace: "backspace",
-    delete: "delete",
-    insert: "insert",
-    home: "home",
-    end: "end",
-    pageup: "pageup",
-    pagedown: "pagedown",
-    arrowup: "up",
-    arrowdown: "down",
-    arrowleft: "left",
-    arrowright: "right",
-    capslock: "capslock",
-    numlock: "numlock",
-    scrolllock: "scrolllock",
-    printscreen: "printscreen",
-    pause: "pause",
-    break: "pause",
-    contextmenu: "menu",
-    apps: "menu",
-    menu: "menu",
-    escape: "escape",
-    esc: "escape",
-  };
-
   if (/^f\d{1,2}$/i.test(key)) {
     return lower;
   }
 
-  return keyMap[lower] ?? null;
+  return NAMED_KEY_MAP[lower] ?? null;
 }
 
 function mainKeyFromCode(
@@ -313,8 +469,8 @@ function mainKeyFromCode(
   key: string,
   location?: number,
 ): string | null {
-  if (code === "IntlBackslash") {
-    return "IntlBackslash";
+  if (PHYSICAL_KEY_CODE_SET.has(code)) {
+    return code;
   }
 
   if (/^Key[A-Z]$/.test(code)) {
@@ -347,7 +503,8 @@ function mainKeyFromKey(key: string): string | null {
     normalizedNamedKey ??
     normalizeNumpadToken(key) ??
     normalizeMouseToken(key) ??
-    (SHIFTED_SYMBOL_BASE_MAP[key] ?? (key.length === 1 ? key.toLowerCase() : null))
+    SHIFTED_SYMBOL_BASE_MAP[key] ??
+    (key.length === 1 ? key.toLowerCase() : null)
   );
 }
 
@@ -367,6 +524,140 @@ function buildHotkeyString(
   return parts.join("+");
 }
 
+const HELD_ORDER = [
+  "ctrl",
+  "leftctrl",
+  "rightctrl",
+  "alt",
+  "leftalt",
+  "rightalt",
+  "shift",
+  "leftshift",
+  "rightshift",
+  "super",
+  "leftsuper",
+  "rightsuper",
+];
+
+export function sortHeld(held: string[]): string[] {
+  return [...held].sort(
+    (a, b) => HELD_ORDER.indexOf(a) - HELD_ORDER.indexOf(b),
+  );
+}
+
+function normalizeMainKeyForStorage(raw: string): string {
+  if (/^Key[A-Z]$/.test(raw)) return raw.slice(3).toLowerCase();
+  if (/^Digit[0-9]$/.test(raw)) return raw.slice(5);
+  return raw.toLowerCase();
+}
+
+export function getMainKey(
+  event: Pick<KeyboardCaptureEvent, "key" | "code" | "location">,
+): string | null {
+  const lowerKey = event.key.toLowerCase();
+  if (MODIFIER_KEYS.has(lowerKey)) return null;
+  if (event.code && MODIFIER_CODES.has(event.code)) return null;
+  if (lowerKey === "escape" || event.code === "Escape") return null;
+  const raw =
+    (event.code
+      ? mainKeyFromCode(event.code, event.key, event.location)
+      : null) ?? mainKeyFromKey(event.key);
+  if (!raw) return null;
+  return normalizeMainKeyForStorage(raw);
+}
+
+export const MAX_CHORD_MAINS = 5;
+
+export function buildHotkeyWithHeld(mainKey: string, held: string[]): string {
+  if (held.length === 0) return normalizeMainKeyForStorage(mainKey);
+  return `${sortHeld(held).join("+")}+${normalizeMainKeyForStorage(mainKey)}`;
+}
+
+export function buildChordHotkey(
+  mains: string[],
+  held: string[],
+): string | null {
+  if (mains.length === 0) return null;
+  if (mains.length > MAX_CHORD_MAINS) return null;
+  const normalized = mains.map((m) => normalizeMainKeyForStorage(m)).sort();
+  if (new Set(normalized).size !== normalized.length) return null;
+  const prefix = held.length > 0 ? `${sortHeld(held).join("+")}+` : "";
+  return `${prefix}${normalized.join("+")}`;
+}
+
+const SIDE_MODIFIER_TOKENS = new Set([
+  "leftctrl",
+  "ctrlleft",
+  "lctrl",
+  "rightctrl",
+  "ctrlright",
+  "rctrl",
+  "leftalt",
+  "altleft",
+  "lalt",
+  "rightalt",
+  "altright",
+  "ralt",
+  "altgr",
+  "leftshift",
+  "shiftleft",
+  "lshift",
+  "rightshift",
+  "shiftright",
+  "rshift",
+  "leftsuper",
+  "superleft",
+  "leftwin",
+  "winleft",
+  "lwin",
+  "rightsuper",
+  "superright",
+  "rightwin",
+  "winright",
+  "rwin",
+]);
+
+const LEFT_CTRL_TOKENS = new Set(["leftctrl", "ctrlleft", "lctrl"]);
+const RIGHT_CTRL_TOKENS = new Set(["rightctrl", "ctrlright", "rctrl"]);
+const LEFT_ALT_TOKENS = new Set(["leftalt", "altleft", "lalt"]);
+const RIGHT_ALT_TOKENS = new Set(["rightalt", "altright", "ralt", "altgr"]);
+const LEFT_SHIFT_TOKENS = new Set(["leftshift", "shiftleft", "lshift"]);
+const RIGHT_SHIFT_TOKENS = new Set(["rightshift", "shiftright", "rshift"]);
+const LEFT_SUPER_TOKENS = new Set([
+  "leftsuper",
+  "superleft",
+  "leftwin",
+  "winleft",
+  "lwin",
+]);
+const RIGHT_SUPER_TOKENS = new Set([
+  "rightsuper",
+  "superright",
+  "rightwin",
+  "winright",
+  "rwin",
+]);
+
+export function hotkeyMainKeys(hotkey: string): string[] {
+  if (!hotkey) return [];
+  const parts = hotkey
+    .split("+")
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+  // solo side modifier is treated as main (backend early return for SIDE_VKS)
+  if (parts.length === 1 && SIDE_MODIFIER_TOKENS.has(parts[0]!)) {
+    return [parts[0]!];
+  }
+  const mains: string[] = [];
+  for (const p of parts) {
+    if (SIDE_MODIFIER_TOKENS.has(p)) continue;
+    const mod = normalizeModifierToken(p);
+    if (mod) continue;
+    mains.push(p);
+  }
+  return mains;
+}
+
 function displayTokenFromStoredValue(
   token: string,
   layoutMap: LayoutMapLike | null,
@@ -375,8 +666,12 @@ function displayTokenFromStoredValue(
   const trimmed = token.trim();
   if (!trimmed) return trimmed;
 
-  if (trimmed === "IntlBackslash") {
-    return layoutMap?.get("IntlBackslash") ?? "<";
+  const physicalCode = PHYSICAL_KEY_CODE_BY_LOWER[trimmed.toLowerCase()];
+  if (physicalCode) {
+    return (
+      layoutMap?.get(physicalCode) ??
+      PHYSICAL_KEY_DISPLAY_FALLBACK[physicalCode]
+    );
   }
 
   if (/^Key[A-Z]$/.test(trimmed)) {
@@ -390,7 +685,11 @@ function displayTokenFromStoredValue(
   }
 
   if (NUMPAD_CODE_MAP[trimmed]) {
-    return displayTokenFromStoredValue(NUMPAD_CODE_MAP[trimmed], layoutMap, labels);
+    return displayTokenFromStoredValue(
+      NUMPAD_CODE_MAP[trimmed],
+      layoutMap,
+      labels,
+    );
   }
 
   const lower = trimmed.toLowerCase();
@@ -399,49 +698,22 @@ function displayTokenFromStoredValue(
     return `Num ${lower.slice(6)}`;
   }
 
-  const namedDisplayMap: Record<string, string> = {
-    up: "Up",
-    down: "Down",
-    left: "Left",
-    right: "Right",
-    pageup: "Page Up",
-    pagedown: "Page Down",
-    backspace: "Backspace",
-    delete: "Delete",
-    insert: "Insert",
-    home: "Home",
-    end: "End",
-    enter: "Enter",
-    tab: "Tab",
-    space: "Space",
-    escape: "Esc",
-    esc: "Esc",
-    capslock: "Caps Lock",
-    numlock: "Num Lock",
-    scrolllock: "Scroll Lock",
-    printscreen: "Print Screen",
-    pause: "Pause",
-    menu: "Menu",
-    numpadadd: "Num +",
-    numpadsubtract: "Num -",
-    numpadmultiply: "Num *",
-    numpaddivide: "Num /",
-    numpaddecimal: "Num .",
-    mouseleft: "Mouse Left",
-    mouseright: "Mouse Right",
-    mousemiddle: "Mouse Middle",
-    mouse4: "Mouse Back",
-    mouse5: "Mouse Forward",
-  };
-
-  if (namedDisplayMap[lower]) {
-    return labels?.keys[lower] ?? namedDisplayMap[lower];
+  if (NAMED_DISPLAY_MAP[lower]) {
+    return labels?.keys[lower] ?? NAMED_DISPLAY_MAP[lower];
   }
 
   return trimmed;
 }
 
-function normalizeStoredMainKey(
+function physicalKeyCodeForToken(token: string): string | null {
+  return (
+    PHYSICAL_KEY_CODE_BY_LOWER[token.toLowerCase()] ??
+    SYMBOL_TO_PHYSICAL_KEY_CODE[token] ??
+    null
+  );
+}
+
+export function normalizeStoredMainKey(
   token: string,
   layoutMap: LayoutMapLike | null,
 ): string {
@@ -454,7 +726,8 @@ function normalizeStoredMainKey(
 
   if (/^Key[A-Z]$/.test(trimmed)) {
     const mapped = layoutMap?.get(trimmed);
-    return mapped ? mapped.toLowerCase() : trimmed.slice(3).toLowerCase();
+    if (!mapped) return trimmed.slice(3).toLowerCase();
+    return physicalKeyCodeForToken(mapped) ?? mapped.toLowerCase();
   }
 
   if (/^Digit[0-9]$/.test(trimmed)) {
@@ -465,28 +738,26 @@ function normalizeStoredMainKey(
     return `numpad${trimmed.slice(6)}`;
   }
 
-  const lower = trimmed.toLowerCase();
-  if (lower === "<" || lower === ">" || lower === "intlbackslash") {
-    return "IntlBackslash";
-  }
-
-  if (SHIFTED_SYMBOL_BASE_MAP[trimmed]) {
-    return SHIFTED_SYMBOL_BASE_MAP[trimmed];
+  const physicalCode = physicalKeyCodeForToken(trimmed);
+  if (physicalCode) {
+    return physicalCode;
   }
 
   return (
     normalizeMouseToken(trimmed) ??
     normalizeNumpadToken(trimmed) ??
     normalizeNamedKey(trimmed) ??
-    lower
+    trimmed.toLowerCase()
   );
 }
 
 export async function getKeyboardLayoutMap(): Promise<LayoutMapLike | null> {
   if (!layoutMapPromise) {
-    const keyboard = (navigator as Navigator & {
-      keyboard?: { getLayoutMap?: () => Promise<LayoutMapLike> };
-    }).keyboard;
+    const keyboard = (
+      navigator as Navigator & {
+        keyboard?: { getLayoutMap?: () => Promise<LayoutMapLike> };
+      }
+    ).keyboard;
 
     layoutMapPromise = keyboard?.getLayoutMap
       ? keyboard.getLayoutMap().catch(() => null)
@@ -496,9 +767,31 @@ export async function getKeyboardLayoutMap(): Promise<LayoutMapLike | null> {
   return layoutMapPromise;
 }
 
-export async function canonicalizeHotkeyForBackend(value: string): Promise<string> {
+export async function canonicalizeHotkeyForBackend(
+  value: string,
+): Promise<string> {
   const layoutMap = await getKeyboardLayoutMap();
   return canonicalizeHotkeyString(value, layoutMap);
+}
+
+export function captureModifierHotkey(
+  event: KeyboardCaptureEvent,
+): string | null {
+  if (event.code) {
+    const codeMapped = MODIFIER_CODE_MAIN_KEY_MAP[event.code];
+    if (codeMapped) return codeMapped;
+  }
+
+  const lowerKey = event.key.toLowerCase();
+  if (!MODIFIER_KEYS.has(lowerKey)) return null;
+
+  const side = event.location === 2 ? "right" : "left";
+  if (lowerKey === "control" || lowerKey === "ctrl") return `${side}ctrl`;
+  if (lowerKey === "shift") return `${side}shift`;
+  if (lowerKey === "alt" || lowerKey === "altgraph") return `${side}alt`;
+  if (lowerKey === "meta" || lowerKey === "os") return `${side}super`;
+
+  return null;
 }
 
 export function captureHotkey(event: KeyboardCaptureEvent): string | null {
@@ -509,8 +802,9 @@ export function captureHotkey(event: KeyboardCaptureEvent): string | null {
   if (lowerKey === "escape" || event.code === "Escape") return null;
 
   const mainKey =
-    (event.code ? mainKeyFromCode(event.code, event.key, event.location) : null) ??
-    mainKeyFromKey(event.key);
+    (event.code
+      ? mainKeyFromCode(event.code, event.key, event.location)
+      : null) ?? mainKeyFromKey(event.key);
 
   if (!mainKey) return null;
 
@@ -541,7 +835,9 @@ export function formatHotkeyForDisplay(
   return value
     .split("+")
     .map((part) => {
-      const modifier = normalizeModifierToken(part);
+      const lower = part.trim().toLowerCase();
+      const aliasCanonical = normalizeNamedKey(lower) ?? lower;
+      const modifier = normalizeModifierToken(aliasCanonical);
       if (modifier) {
         if (modifier === "ctrl") return labels?.modifiers.ctrl ?? "Ctrl";
         if (modifier === "alt") return labels?.modifiers.alt ?? "Alt";
@@ -549,8 +845,14 @@ export function formatHotkeyForDisplay(
         return labels?.modifiers.super ?? "Super";
       }
 
-      const display = displayTokenFromStoredValue(part, layoutMap, labels);
-      return display.length === 1 ? display.toUpperCase() : display;
+      const display = displayTokenFromStoredValue(
+        aliasCanonical,
+        layoutMap,
+        labels,
+      );
+      return /^[a-z0-9]$/.test(aliasCanonical)
+        ? display.toUpperCase()
+        : display;
     })
     .join(" + ");
 }
@@ -563,11 +865,53 @@ function canonicalizeHotkeyString(
   let alt = false;
   let shift = false;
   let superKey = false;
-  let mainKey: string | null = null;
+  let leftCtrl = false;
+  let rightCtrl = false;
+  let leftAlt = false;
+  let rightAlt = false;
+  let leftShift = false;
+  let rightShift = false;
+  let leftSuper = false;
+  let rightSuper = false;
+  const mainKeys: string[] = [];
 
   for (const rawPart of value.split("+")) {
-    const part = rawPart.trim();
+    const part = rawPart.trim().toLowerCase();
     if (!part) continue;
+
+    // side-specific first
+    if (LEFT_CTRL_TOKENS.has(part)) {
+      leftCtrl = true;
+      continue;
+    }
+    if (RIGHT_CTRL_TOKENS.has(part)) {
+      rightCtrl = true;
+      continue;
+    }
+    if (LEFT_ALT_TOKENS.has(part)) {
+      leftAlt = true;
+      continue;
+    }
+    if (RIGHT_ALT_TOKENS.has(part)) {
+      rightAlt = true;
+      continue;
+    }
+    if (LEFT_SHIFT_TOKENS.has(part)) {
+      leftShift = true;
+      continue;
+    }
+    if (RIGHT_SHIFT_TOKENS.has(part)) {
+      rightShift = true;
+      continue;
+    }
+    if (LEFT_SUPER_TOKENS.has(part)) {
+      leftSuper = true;
+      continue;
+    }
+    if (RIGHT_SUPER_TOKENS.has(part)) {
+      rightSuper = true;
+      continue;
+    }
 
     const modifier = normalizeModifierToken(part);
     if (modifier) {
@@ -578,27 +922,54 @@ function canonicalizeHotkeyString(
       continue;
     }
 
-    mainKey = normalizeStoredMainKey(part, layoutMap);
+    mainKeys.push(normalizeStoredMainKey(part, layoutMap));
   }
 
+  // chord: sort lexical (keep duplicates so backend can reject)
+  const sortedMains = [...mainKeys].sort();
   const parts: string[] = [];
   if (ctrl) parts.push("ctrl");
+  if (leftCtrl) parts.push("leftctrl");
+  if (rightCtrl) parts.push("rightctrl");
   if (alt) parts.push("alt");
+  if (leftAlt) parts.push("leftalt");
+  if (rightAlt) parts.push("rightalt");
   if (shift) parts.push("shift");
+  if (leftShift) parts.push("leftshift");
+  if (rightShift) parts.push("rightshift");
   if (superKey) parts.push("super");
-  if (mainKey) parts.push(mainKey);
+  if (leftSuper) parts.push("leftsuper");
+  if (rightSuper) parts.push("rightsuper");
+  for (const mk of sortedMains) parts.push(mk);
   return parts.join("+");
 }
 
 export function hotkeyMainKey(hotkey: string): string | null {
   if (!hotkey) return null;
+  const mains = hotkeyMainKeys(hotkey);
+  if (mains.length > 0) return mains[mains.length - 1] ?? null;
   const parts = hotkey.split("+").map((p) => p.trim().toLowerCase());
-  return parts.length > 0 ? parts[parts.length - 1] ?? null : null;
+  return parts.length > 0 ? (parts[parts.length - 1] ?? null) : null;
 }
 
 export function hotkeyModifiers(hotkey: string): string[] {
-  const parts = hotkey.split("+").map((p) => p.trim().toLowerCase());
-  return parts.length > 1 ? parts.slice(0, -1) : [];
+  const mains = hotkeyMainKeys(hotkey);
+  const allParts = hotkey
+    .split("+")
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+  // solo side modifier is main, not modifier
+  if (allParts.length === 1 && SIDE_MODIFIER_TOKENS.has(allParts[0]!)) {
+    return [];
+  }
+  return allParts.filter((p) => {
+    if (SIDE_MODIFIER_TOKENS.has(p)) {
+      // if this side token is also a main (solo case), don't count as modifier
+      if (mains.includes(p)) return false;
+      return true;
+    }
+    return normalizeModifierToken(p) !== null;
+  });
 }
 
 export function conflictsWithAutoPressKey(
@@ -607,12 +978,20 @@ export function conflictsWithAutoPressKey(
   keyboardKeyCaseIsUpper: boolean,
 ): boolean {
   if (!hotkey || !keyboardKey) return false;
-  const mainKey = hotkeyMainKey(hotkey);
+  const mains = hotkeyMainKeys(hotkey).map((main) =>
+    normalizeStoredMainKey(main, null),
+  );
   const modifiers = hotkeyModifiers(hotkey);
-  const kbKey = keyboardKey.toLowerCase();
-  if (!mainKey || mainKey !== kbKey) return false;
+  const kbKey = normalizeStoredMainKey(keyboardKey, null);
+  // chord hotkeys need both mains, single auto key never triggers loop
+  if (mains.length !== 1 || mains[0] !== kbKey) return false;
   if (modifiers.length === 0) return true;
-  if (keyboardKeyCaseIsUpper && modifiers.length === 1 && modifiers[0] === "shift") return true;
+  if (
+    keyboardKeyCaseIsUpper &&
+    modifiers.length === 1 &&
+    modifiers[0] === "shift"
+  )
+    return true;
   return false;
 }
 

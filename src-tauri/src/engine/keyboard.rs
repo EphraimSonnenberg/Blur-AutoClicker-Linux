@@ -1,18 +1,19 @@
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use super::cycle::{execute_click_cycle, ClickCycleKind, ClickCyclePlan};
 use super::worker::{sleep_interruptible, RunControl};
+use super::SendResult;
+#[cfg(target_os = "windows")]
 use super::AUTOCLICKER_EXTRA_INFO;
-
+#[cfg(target_os = "linux")]
+use crate::linux::win32::{GetKeyState, KEYEVENTF_KEYUP, VK_CAPITAL, VK_SHIFT};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, MapVirtualKeyW, SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC_EX, VK_CAPITAL,
     VK_SHIFT,
 };
-
-#[inline]
-pub fn is_alphabetic_vk(vk: u16) -> bool {
-    (b'A' as u16..=b'Z' as u16).contains(&vk)
-}
 
 #[cfg(target_os = "windows")]
 #[inline]
@@ -28,14 +29,13 @@ fn vk_to_scan(vk: u16) -> (u16, bool) {
 
 #[cfg(target_os = "windows")]
 #[inline]
-pub fn make_keyboard_input(vk: u16, flags: u32) -> INPUT {
-    let (scan, extended) = vk_to_scan(vk);
+fn make_keyboard_input_with_scan(scan: u16, extended: bool, flags: u32) -> INPUT {
     let ext_flag = if extended { KEYEVENTF_EXTENDEDKEY } else { 0 };
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
             ki: KEYBDINPUT {
-                wVk: vk,
+                wVk: 0,
                 wScan: scan,
                 dwFlags: flags | KEYEVENTF_SCANCODE | ext_flag,
                 time: 0,
@@ -47,19 +47,64 @@ pub fn make_keyboard_input(vk: u16, flags: u32) -> INPUT {
 
 #[cfg(target_os = "windows")]
 #[inline]
-pub fn send_key_event(vk: u16, flags: u32) {
-    let input = make_keyboard_input(vk, flags);
-    unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
+pub fn make_keyboard_input(vk: u16, flags: u32) -> INPUT {
+    let (scan, extended) = vk_to_scan(vk);
+    make_keyboard_input_with_scan(scan, extended, flags)
+}
+
+#[cfg(target_os = "linux")]
+#[inline]
+pub fn send_key_event(vk: u16, flags: u32) -> bool {
+    let up = flags & KEYEVENTF_KEYUP != 0;
+    let sent = crate::linux::inject::send_vk(vk, !up);
+    if sent && up {
+        crate::hotkeys::note_injected_key(vk as i32);
+    }
+    sent
+}
+
+#[cfg(target_os = "linux")]
+pub fn send_key_batch(vk: u16, n: usize, uppercase: bool) -> bool {
+    let use_shift = should_hold_shift_for_case(vk, uppercase);
+    let mut accepted = true;
+    for _ in 0..n {
+        if use_shift {
+            accepted &= send_key_event(VK_SHIFT, 0);
+        }
+        accepted &= send_key_event(vk, 0);
+        accepted &= send_key_event(vk, KEYEVENTF_KEYUP);
+        if use_shift {
+            accepted &= send_key_event(VK_SHIFT, KEYEVENTF_KEYUP);
+        }
+    }
+    accepted
 }
 
 #[cfg(target_os = "windows")]
+#[inline]
+pub fn send_key_event(vk: u16, flags: u32) -> bool {
+    let input = make_keyboard_input(vk, flags);
+    let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
+    if sent == 1 && flags & KEYEVENTF_KEYUP != 0 {
+        crate::hotkeys::note_injected_key(vk as i32);
+    }
+    sent == 1
+}
+
+pub fn is_alphabetic_vk(vk: u16) -> bool {
+    (b'A' as u16..=b'Z' as u16).contains(&vk)
+}
+
 fn caps_lock_enabled() -> bool {
     unsafe { (GetKeyState(VK_CAPITAL as i32) & 1) != 0 }
 }
 
-#[cfg(target_os = "windows")]
 fn should_hold_shift_for_case(vk: u16, uppercase: bool) -> bool {
-    is_alphabetic_vk(vk) && (caps_lock_enabled() != uppercase)
+    shift_needed_for_case(vk, uppercase, caps_lock_enabled())
+}
+
+fn shift_needed_for_case(vk: u16, uppercase: bool, caps_lock_on: bool) -> bool {
+    is_alphabetic_vk(vk) && (caps_lock_on != uppercase)
 }
 
 #[cfg(target_os = "windows")]
@@ -76,361 +121,298 @@ fn push_key_press(inputs: &mut Vec<INPUT>, vk: u16, use_shift: bool) {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct KeyDown {
+    pub use_shift: bool,
+    pub shift_down: bool,
+    pub key_down: bool,
+}
+
+impl KeyDown {
+    pub(crate) fn accepted(self) -> bool {
+        self.key_down
+    }
+
+    pub(crate) fn held(self) -> bool {
+        self.shift_down || self.key_down
+    }
+
+    pub(crate) fn latch(&mut self, press: KeyDown) {
+        if press.shift_down {
+            self.use_shift = press.use_shift;
+        }
+        self.shift_down |= press.shift_down;
+        self.key_down |= press.key_down;
+    }
+}
+
+pub(crate) fn send_key_down(vk: u16, uppercase: bool) -> KeyDown {
+    let use_shift = should_hold_shift_for_case(vk, uppercase);
+    if use_shift && !send_key_event(VK_SHIFT, 0) {
+        return KeyDown {
+            use_shift,
+            shift_down: false,
+            key_down: false,
+        };
+    }
+    KeyDown {
+        use_shift,
+        shift_down: use_shift,
+        key_down: send_key_event(vk, 0),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct KeyUpPlan {
+    key: bool,
+    shift: bool,
+}
+
+fn key_up_plan(down: KeyDown) -> KeyUpPlan {
+    KeyUpPlan {
+        key: down.key_down,
+        shift: down.use_shift && down.shift_down,
+    }
+}
+
+pub(crate) fn send_key_up(vk: u16, down: KeyDown) -> bool {
+    let plan = key_up_plan(down);
+    let key_ok = !plan.key || send_key_event(vk, KEYEVENTF_KEYUP);
+    let shift_ok = !plan.shift || send_key_event(VK_SHIFT, KEYEVENTF_KEYUP);
+    key_ok && shift_ok
+}
+
+pub(crate) fn after_release(down: KeyDown, released: bool) -> KeyDown {
+    if released {
+        KeyDown::default()
+    } else {
+        down
+    }
+}
+
 #[cfg(target_os = "windows")]
-fn send_key_batch(vk: u16, n: usize, uppercase: bool) {
+static PARTIAL_KEYBOARD_INSERT_WARNED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "windows")]
+pub fn send_key_batch(vk: u16, n: usize, uppercase: bool) -> bool {
     let use_shift = should_hold_shift_for_case(vk, uppercase);
     let inputs_per_press = if use_shift { 4 } else { 2 };
     let mut inputs: Vec<INPUT> = Vec::with_capacity(n * inputs_per_press);
     for _ in 0..n {
         push_key_press(&mut inputs, vk, use_shift);
     }
-    unsafe {
+    debug_assert_eq!(inputs.len(), n * inputs_per_press);
+    let expected = inputs.len() as u32;
+    let sent = unsafe {
         SendInput(
-            inputs.len() as u32,
+            expected,
             inputs.as_ptr(),
             std::mem::size_of::<INPUT>() as i32,
         )
     };
-}
-
-#[cfg(target_os = "windows")]
-fn send_key_down(vk: u16, use_shift: bool) {
-    if use_shift {
-        send_key_event(VK_SHIFT, 0);
+    let accepted = sent == expected;
+    if sent > 0 {
+        crate::hotkeys::note_injected_key(vk as i32);
+        if use_shift {
+            crate::hotkeys::note_injected_key(VK_SHIFT as i32);
+        }
     }
-    send_key_event(vk, 0);
+    if accepted {
+        PARTIAL_KEYBOARD_INSERT_WARNED.store(false, Ordering::Relaxed);
+    } else if !PARTIAL_KEYBOARD_INSERT_WARNED.swap(true, Ordering::Relaxed) {
+        log::warn!("[engine] Windows accepted {sent} of {expected} keyboard input events");
+    }
+    accepted
 }
 
-#[cfg(target_os = "windows")]
-fn send_key_up(vk: u16, use_shift: bool) {
-    send_key_event(vk, KEYEVENTF_KEYUP);
-    if use_shift {
-        send_key_event(VK_SHIFT, KEYEVENTF_KEYUP);
+fn batch_residual(vk: u16, uppercase: bool) -> KeyDown {
+    let use_shift = should_hold_shift_for_case(vk, uppercase);
+    KeyDown {
+        use_shift,
+        shift_down: use_shift,
+        key_down: true,
     }
 }
 
-#[cfg(target_os = "windows")]
 pub fn send_key_presses(
     vk: u16,
-    _key_token: &str,
     count: usize,
     uppercase: bool,
     plan: ClickCyclePlan,
     control: &RunControl,
     should_abort: &dyn Fn() -> bool,
-) {
+) -> SendResult {
+    let (result, residual) =
+        send_key_presses_inner(vk, count, uppercase, plan, control, should_abort);
+    if result.is_blocked() && residual.held() {
+        let _ = send_key_up(vk, residual);
+    }
+    result
+}
+
+fn send_key_presses_inner(
+    vk: u16,
+    count: usize,
+    uppercase: bool,
+    plan: ClickCyclePlan,
+    control: &RunControl,
+    should_abort: &dyn Fn() -> bool,
+) -> (SendResult, KeyDown) {
     if count == 0 {
-        return;
+        return (SendResult::Sent, KeyDown::default());
     }
 
     if should_abort() {
-        return;
+        return (SendResult::Sent, KeyDown::default());
     }
 
-    if plan.kind == ClickCycleKind::Single && count > 1 && plan.first_hold_ms == 0 {
-        send_key_batch(vk, count, uppercase);
-        return;
+    if plan.kind == ClickCycleKind::Single && plan.first_hold_ms == 0 {
+        let residual = batch_residual(vk, uppercase);
+        if count > 1 {
+            return (batch_result(send_key_batch(vk, count, uppercase)), residual);
+        }
+        if !control.is_active() {
+            return (SendResult::Sent, KeyDown::default());
+        }
+        return (batch_result(send_key_batch(vk, count, uppercase)), residual);
     }
 
-    let use_shift = should_hold_shift_for_case(vk, uppercase);
-    let is_active = || control.is_active();
-    let mut sleep_for = |duration| sleep_interruptible(duration, control);
+    let blocked = std::cell::Cell::new(false);
+    let down = std::cell::Cell::new(KeyDown::default());
+    let is_active = || control.is_active() && !should_abort();
+    let mut sleep_for = |duration| sleep_interruptible(duration, control, should_abort);
 
     for _ in 0..count {
         if should_abort() {
-            return;
+            break;
         }
-        if !execute_click_cycle(
-            plan,
-            &mut || send_key_down(vk, use_shift),
-            &mut || send_key_up(vk, use_shift),
-            &mut sleep_for,
-            &is_active,
-        ) {
-            return;
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-mod linux {
-    use evdev::{AttributeSet, EventType, InputEvent, Key};
-    use std::sync::{Mutex, OnceLock};
-
-    static DEVICE: OnceLock<Option<Mutex<evdev::uinput::VirtualDevice>>> = OnceLock::new();
-
-    pub fn get() -> Option<&'static Mutex<evdev::uinput::VirtualDevice>> {
-        DEVICE
-            .get_or_init(|| {
-                let builder = match evdev::uinput::VirtualDeviceBuilder::new() {
-                    Ok(b) => b,
-                    Err(e) => {
-                        log::error!("[uinput-keyboard] Failed to open /dev/uinput: {e}");
-                        return None;
-                    }
-                };
-
-                let keys: Vec<Key> = (evdev::Key::KEY_ESC.code()..=evdev::Key::KEY_MICMUTE.code())
-                    .filter_map(|code| {
-                        let key = Key::new(code);
-                        Some(key)
-                    })
-                    .collect();
-
-                let dev = match builder
-                    .name("blur-autoclicker-keyboard")
-                    .with_keys(&AttributeSet::from_iter(keys))
-                    .and_then(|b| b.build())
-                {
-                    Ok(d) => d,
-                    Err(e) => {
-                        log::error!("[uinput-keyboard] Failed to build virtual device: {e}");
-                        return None;
-                    }
-                };
-                Some(Mutex::new(dev))
-            })
-            .as_ref()
-    }
-
-    pub fn available() -> bool {
-        get().is_some()
-    }
-
-    pub fn token_to_evdev_key(token: &str) -> Option<Key> {
-        if token.len() == 1 {
-            let ch = token.chars().next().unwrap();
-            return match ch.to_ascii_lowercase() {
-                'a' => Some(Key::KEY_A),
-                'b' => Some(Key::KEY_B),
-                'c' => Some(Key::KEY_C),
-                'd' => Some(Key::KEY_D),
-                'e' => Some(Key::KEY_E),
-                'f' => Some(Key::KEY_F),
-                'g' => Some(Key::KEY_G),
-                'h' => Some(Key::KEY_H),
-                'i' => Some(Key::KEY_I),
-                'j' => Some(Key::KEY_J),
-                'k' => Some(Key::KEY_K),
-                'l' => Some(Key::KEY_L),
-                'm' => Some(Key::KEY_M),
-                'n' => Some(Key::KEY_N),
-                'o' => Some(Key::KEY_O),
-                'p' => Some(Key::KEY_P),
-                'q' => Some(Key::KEY_Q),
-                'r' => Some(Key::KEY_R),
-                's' => Some(Key::KEY_S),
-                't' => Some(Key::KEY_T),
-                'u' => Some(Key::KEY_U),
-                'v' => Some(Key::KEY_V),
-                'w' => Some(Key::KEY_W),
-                'x' => Some(Key::KEY_X),
-                'y' => Some(Key::KEY_Y),
-                'z' => Some(Key::KEY_Z),
-                '0' => Some(Key::KEY_0),
-                '1' => Some(Key::KEY_1),
-                '2' => Some(Key::KEY_2),
-                '3' => Some(Key::KEY_3),
-                '4' => Some(Key::KEY_4),
-                '5' => Some(Key::KEY_5),
-                '6' => Some(Key::KEY_6),
-                '7' => Some(Key::KEY_7),
-                '8' => Some(Key::KEY_8),
-                '9' => Some(Key::KEY_9),
-                '/' => Some(Key::KEY_SLASH),
-                '\\' => Some(Key::KEY_BACKSLASH),
-                ';' => Some(Key::KEY_SEMICOLON),
-                '\'' => Some(Key::KEY_APOSTROPHE),
-                '[' => Some(Key::KEY_LEFTBRACE),
-                ']' => Some(Key::KEY_RIGHTBRACE),
-                '-' => Some(Key::KEY_MINUS),
-                '=' => Some(Key::KEY_EQUAL),
-                '`' => Some(Key::KEY_GRAVE),
-                ',' => Some(Key::KEY_COMMA),
-                '.' => Some(Key::KEY_DOT),
-                ' ' => Some(Key::KEY_SPACE),
-                _ => None,
-            };
-        }
-
-        match token {
-            "space" => Some(Key::KEY_SPACE),
-            "tab" => Some(Key::KEY_TAB),
-            "enter" => Some(Key::KEY_ENTER),
-            "return" => Some(Key::KEY_ENTER),
-            "backspace" => Some(Key::KEY_BACKSPACE),
-            "delete" => Some(Key::KEY_DELETE),
-            "insert" => Some(Key::KEY_INSERT),
-            "home" => Some(Key::KEY_HOME),
-            "end" => Some(Key::KEY_END),
-            "pageup" => Some(Key::KEY_PAGEUP),
-            "pagedown" => Some(Key::KEY_PAGEDOWN),
-            "up" => Some(Key::KEY_UP),
-            "down" => Some(Key::KEY_DOWN),
-            "left" => Some(Key::KEY_LEFT),
-            "right" => Some(Key::KEY_RIGHT),
-            "escape" => Some(Key::KEY_ESC),
-            "esc" => Some(Key::KEY_ESC),
-            "numpad0" => Some(Key::KEY_KP0),
-            "numpad1" => Some(Key::KEY_KP1),
-            "numpad2" => Some(Key::KEY_KP2),
-            "numpad3" => Some(Key::KEY_KP3),
-            "numpad4" => Some(Key::KEY_KP4),
-            "numpad5" => Some(Key::KEY_KP5),
-            "numpad6" => Some(Key::KEY_KP6),
-            "numpad7" => Some(Key::KEY_KP7),
-            "numpad8" => Some(Key::KEY_KP8),
-            "numpad9" => Some(Key::KEY_KP9),
-            "numpadadd" => Some(Key::KEY_KPPLUS),
-            "numpadsubtract" => Some(Key::KEY_KPMINUS),
-            "numpadmultiply" => Some(Key::KEY_KPASTERISK),
-            "numpaddivide" => Some(Key::KEY_KPSLASH),
-            "numpaddecimal" => Some(Key::KEY_KPDOT),
-            "numpadenter" => Some(Key::KEY_KPENTER),
-            "f1" => Some(Key::KEY_F1),
-            "f2" => Some(Key::KEY_F2),
-            "f3" => Some(Key::KEY_F3),
-            "f4" => Some(Key::KEY_F4),
-            "f5" => Some(Key::KEY_F5),
-            "f6" => Some(Key::KEY_F6),
-            "f7" => Some(Key::KEY_F7),
-            "f8" => Some(Key::KEY_F8),
-            "f9" => Some(Key::KEY_F9),
-            "f10" => Some(Key::KEY_F10),
-            "f11" => Some(Key::KEY_F11),
-            "f12" => Some(Key::KEY_F12),
-            "capslock" => Some(Key::KEY_CAPSLOCK),
-            "printscreen" => Some(Key::KEY_SYSRQ),
-            "scrolllock" => Some(Key::KEY_SCROLLLOCK),
-            "pause" => Some(Key::KEY_PAUSE),
-            "numlock" => Some(Key::KEY_NUMLOCK),
-            "intlbackslash" => Some(Key::KEY_102ND),
-            _ => None,
-        }
-    }
-
-    pub fn emit_key(key: Key, value: i32) {
-        if let Some(dev_lock) = get() {
-            if let Ok(mut dev) = dev_lock.lock() {
-                let _ = dev.emit(&[
-                    InputEvent::new(EventType::KEY, key.code(), value),
-                    InputEvent::new(EventType::SYNCHRONIZATION, 0, 0),
-                ]);
+        let mut press = || {
+            let press = send_key_down(vk, uppercase);
+            let mut held = down.get();
+            held.latch(press);
+            down.set(held);
+            if !press.accepted() {
+                blocked.set(true);
             }
+        };
+        let mut release = || {
+            let held = down.get();
+            if !held.held() {
+                return;
+            }
+            let released = send_key_up(vk, held);
+            down.set(after_release(held, released));
+            if !released {
+                blocked.set(true);
+            }
+        };
+        if !execute_click_cycle(plan, &mut press, &mut release, &mut sleep_for, &is_active) {
+            break;
         }
     }
 
-    pub fn shift_down() {
-        emit_key(Key::KEY_LEFTSHIFT, 1);
-    }
-
-    pub fn shift_up() {
-        emit_key(Key::KEY_LEFTSHIFT, 0);
-    }
-}
-
-#[cfg(target_os = "linux")]
-pub fn linux_key_available() -> bool {
-    linux::available()
-}
-
-#[cfg(target_os = "linux")]
-fn token_is_alphabetic(token: &str) -> bool {
-    token.len() == 1
-        && token
-            .chars()
-            .next()
-            .map(|c| c.is_ascii_alphabetic())
-            .unwrap_or(false)
-}
-
-#[cfg(target_os = "linux")]
-fn send_key_down(key: evdev::Key, use_shift: bool) {
-    if use_shift {
-        linux::shift_down();
-    }
-    linux::emit_key(key, 1);
-}
-
-#[cfg(target_os = "linux")]
-fn send_key_up(key: evdev::Key, use_shift: bool) {
-    linux::emit_key(key, 0);
-    if use_shift {
-        linux::shift_up();
-    }
-}
-
-#[cfg(target_os = "linux")]
-pub fn send_key_presses(
-    _vk: u16,
-    key_token: &str,
-    count: usize,
-    uppercase: bool,
-    plan: ClickCyclePlan,
-    control: &RunControl,
-    should_abort: &dyn Fn() -> bool,
-) {
-    if count == 0 {
-        return;
-    }
-
-    if should_abort() {
-        return;
-    }
-
-    let key = match linux::token_to_evdev_key(key_token) {
-        Some(k) => k,
-        None => {
-            log::error!("[keyboard] No evdev mapping for key '{key_token}'");
-            return;
-        }
+    let result = if blocked.get() {
+        SendResult::Blocked
+    } else {
+        SendResult::Sent
     };
-
-    let use_shift = token_is_alphabetic(key_token) && uppercase;
-    let is_active = || control.is_active();
-    let mut sleep_for = |duration| sleep_interruptible(duration, control);
-
-    for _ in 0..count {
-        if should_abort() {
-            return;
-        }
-        if !execute_click_cycle(
-            plan,
-            &mut || send_key_down(key, use_shift),
-            &mut || send_key_up(key, use_shift),
-            &mut sleep_for,
-            &is_active,
-        ) {
-            return;
-        }
-    }
+    (result, down.get())
 }
 
 #[inline]
-pub fn send_key_presses_cross_platform(
-    vk: u16,
-    key_token: &str,
-    count: usize,
-    uppercase: bool,
-    plan: ClickCyclePlan,
-    control: &RunControl,
-    should_abort: &dyn Fn() -> bool,
-) {
-    #[cfg(target_os = "windows")]
-    {
-        send_key_presses(vk, key_token, count, uppercase, plan, control, should_abort);
-    }
-    #[cfg(target_os = "linux")]
-    {
-        send_key_presses(vk, key_token, count, uppercase, plan, control, should_abort);
+fn batch_result(sent: bool) -> SendResult {
+    if sent {
+        SendResult::Sent
+    } else {
+        SendResult::Blocked
     }
 }
 
-#[cfg(target_os = "linux")]
-pub fn keyboard_diagnostic() -> String {
-    if linux::available() {
-        String::from("Wayland uinput keyboard backend - available")
-    } else {
-        String::from("Wayland uinput keyboard backend unavailable")
+#[cfg(test)]
+mod tests {
+    use super::{after_release, key_up_plan, shift_needed_for_case, KeyDown, KeyUpPlan};
+
+    fn down(use_shift: bool, shift_down: bool, key_down: bool) -> KeyDown {
+        KeyDown {
+            use_shift,
+            shift_down,
+            key_down,
+        }
+    }
+
+    #[test]
+    fn a_partial_press_still_releases_the_shift_it_pressed() {
+        let partial = down(true, true, false);
+
+        assert!(!partial.accepted());
+        assert!(partial.held());
+        assert_eq!(
+            key_up_plan(partial),
+            KeyUpPlan {
+                key: false,
+                shift: true
+            }
+        );
+    }
+
+    #[test]
+    fn a_rejected_shift_press_leaves_nothing_to_release() {
+        let rejected = down(true, false, false);
+
+        assert!(!rejected.held());
+        assert_eq!(
+            key_up_plan(rejected),
+            KeyUpPlan {
+                key: false,
+                shift: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_failed_repeat_press_keeps_the_earlier_press_releasable() {
+        let mut held = KeyDown::default();
+        held.latch(down(true, true, true));
+        held.latch(down(true, false, false));
+
+        assert_eq!(
+            key_up_plan(held),
+            KeyUpPlan {
+                key: true,
+                shift: true
+            }
+        );
+    }
+
+    #[test]
+    fn a_failed_release_keeps_the_key_latched_for_a_retry() {
+        let held = down(true, true, true);
+
+        assert_eq!(after_release(held, false), held);
+        assert_eq!(after_release(held, true), KeyDown::default());
+    }
+
+    #[test]
+    fn a_blocked_batch_reports_the_press_it_must_release() {
+        let residual = super::batch_residual(b'A' as u16, true);
+
+        assert!(residual.held());
+        assert!(key_up_plan(residual).key);
+    }
+
+    #[test]
+    fn release_uses_the_shift_state_captured_at_press_time() {
+        let vk = b'A' as u16;
+        let mut held = KeyDown::default();
+        held.latch(down(shift_needed_for_case(vk, true, false), true, true));
+
+        assert!(!shift_needed_for_case(vk, true, true));
+        assert_eq!(
+            key_up_plan(held),
+            KeyUpPlan {
+                key: true,
+                shift: true
+            }
+        );
     }
 }

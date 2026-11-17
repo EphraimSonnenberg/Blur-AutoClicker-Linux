@@ -18,23 +18,35 @@ Performance is a core focus. RAM usage stays around 50 MB and is designed to nev
 
 ## Platform Support
 
-| Feature | X11 | Wayland (KDE / wlroots) | Notes |
-|---------|-----|------------------------|-------|
-| **Auto Clicking** | Full | Full | Wayland uses `uinput` (needs `input` group) |
-| **Corner / Edge Stop** | Full | Full | Uses cached monitor geometry from Tauri |
-| **Position Clicking** | Full | Limited | Absolute cursor move unavailable on pure Wayland |
-| **Always on Top** | Full | Limited | Pin works via `_NET_WM_STATE_ABOVE`; pure Wayland has no standard protocol |
-| **Cursor Position** | Full | Unavailable | No standard Wayland protocol for global cursor query |
-| **Overlay** | Full | Full | Uses Tauri-provided monitor bounds |
+| Feature | X11 | Wayland (with XWayland) | Notes |
+|---------|-----|-------------------------|-------|
+| **Auto clicking / key pressing** | Full | Full | Wayland uses `uinput`, X11 uses XTEST |
+| **Hotkeys (keyboard and mouse buttons)** | Full | Full | Read from evdev; falls back to X11 polling without the `input` group |
+| **Click points / smooth cursor moves** | Full | Works | Wayland moves the cursor through an absolute `uinput` device |
+| **Corner / edge / custom stop zones** | Full | Limited | Needs the cursor position, see below |
+| **Process whitelist / blacklist** | Full | XWayland apps only | Native Wayland windows cannot be identified |
+| **Overlay, click indicator, always on top** | Full | Full | The app's own windows run through XWayland |
+| **Start with session** | Full | Full | XDG autostart entry |
+| **Run as administrator prompts** | n/a | n/a | Not needed on Linux |
 
-### Running under XWayland
+### Permissions
 
-If you are on a hybrid XWayland system (both `DISPLAY` and `WAYLAND_DISPLAY` are set), the app automatically forces `GDK_BACKEND=x11` so that window-manager features like Always on Top work reliably. The click backend will still use XTEST, which only affects XWayland windows.
+For full functionality your user needs access to `/dev/uinput` and `/dev/input/event*`:
 
-### Pure Wayland Requirements
+```bash
+sudo usermod -aG input $USER
+```
 
-- `uinput` kernel module loaded
-- User in the `input` group (`sudo usermod -aG input $USER`, then log out and back in)
+Then log out and back in. Without it the app still works on a plain X11 session; on Wayland it tells you what is missing in its status line.
+
+### Wayland notes
+
+- On a Wayland session the app's own windows use XWayland (`GDK_BACKEND=x11` is set automatically; set it yourself to override). Wayland does not let a program place a window at exact screen coordinates, which the overlay and click indicator need.
+- Simulated input goes through `uinput`, so it reaches native Wayland and XWayland windows alike.
+- Wayland has no way to ask where the cursor is. The position comes from XWayland, which only updates while the cursor is over an XWayland window (most games through Proton / Wine). Stop zones and the position picker are unreliable over native Wayland windows.
+- Input remappers that grab devices (keyd, input-remapper, ...) are supported.
+
+Set `BLUR_INPUT_BACKEND=x11` or `BLUR_INPUT_BACKEND=uinput` to force how input is simulated.
 
 ---
 
@@ -75,9 +87,7 @@ If you are on a hybrid XWayland system (both `DISPLAY` and `WAYLAND_DISPLAY` are
   </a>
 </div>
 
-This is a portable binary | no installer needed.
-
-Config and stats are stored in `~/.local/share/BlurAutoClicker/`.
+Settings are stored in `~/.local/share/com.blur009.blurautoclicker/`, stats and diagnostics in `~/.local/share/BlurAutoClicker/`.
 
 ---
 

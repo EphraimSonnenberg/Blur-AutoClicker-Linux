@@ -11,7 +11,7 @@
       nixpkgs,
     }:
     let
-      version = "3.8.0";
+      version = "3.10.2";
 
       systems = [
         "aarch64-linux"

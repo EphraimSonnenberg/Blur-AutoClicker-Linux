@@ -2,8 +2,9 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
+import ErrorBoundary from "./components/ErrorBoundary";
+import { installGlobalDiagnostics, logDiagnostic } from "./diagnostics";
 
-// This is to Disable the Right Click Menu
 document.addEventListener("contextmenu", (e) => e.preventDefault());
 
 window.addEventListener(
@@ -16,8 +17,20 @@ window.addEventListener(
   { capture: true },
 );
 
-createRoot(document.getElementById("root")!).render(
+installGlobalDiagnostics();
+
+createRoot(document.getElementById("root")!, {
+  onCaughtError: (err, errorInfo) => {
+    logDiagnostic("createRoot.onCaughtError", {
+      error: err instanceof Error ? err.message : String(err),
+      componentStack: errorInfo.componentStack,
+      errorBoundary: errorInfo.errorBoundary?.constructor?.name,
+    });
+  },
+}).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );
